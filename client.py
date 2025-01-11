@@ -7,7 +7,7 @@ from pygame.sprite import *
 pygame.init()
 host, port = '26.68.85.151', 7891
 size = (800, 800)
-state = 0
+state, running = 0, True
 screen = pygame.display.set_mode(size)
 screen.fill("black")
 
@@ -16,6 +16,11 @@ screen.fill("black")
 def but1_func():
     global state
     state = 2
+
+
+def but2_func():
+    global running
+    running = False
 
 
 # Классы
@@ -103,6 +108,7 @@ class Player(Sprite):
         self.rect = self.image.get_rect()
         self.rect.center = Vector2(*size) // 2
         self.move = Vector2(0, 0)
+        self.pos = Vector2(0, 0)
         self.ulta = False
 
     def update(self, events):
@@ -150,13 +156,13 @@ class Player(Sprite):
 
 
 def main(window_main):
-    global state
+    global state, running
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
     Scenes = [Group(), Group(), Group()]
     is_connect, con_errs = False, 0
-    running, fps = True, 60
+    fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
     FonUi(Scenes[0], (10000, 10000))
@@ -164,6 +170,7 @@ def main(window_main):
     FonUi(Scenes[2], (10000, 10000))
     TextUi(Scenes[0], "Waiting for connection", text_size=(500, 200))
     ButtonUi(Scenes[1], but1_func, "Play", button_size=(200, 100))
+    ButtonUi(Scenes[1], but2_func, "Exit", button_size=(200, 100)).rect.center[1] += 100
     player = Player(Scenes[2], "")
     # Основной игровой цикл
     while running:
@@ -188,7 +195,7 @@ def main(window_main):
             try:
                 # Взаимодействие с сервером
                 ClientSocket.send(str.encode(f'[{client_id}, {player.rect.center}, {player.ulta}, {player.nick}]'))
-                log_de = eval(ClientSocket.recv(2048).decode('utf-8'))
+                log = eval(ClientSocket.recv(2048).decode('utf-8'))
                 con_errs = 0
             except Exception as e:
                 con_errs += 1
