@@ -1,21 +1,21 @@
 import pygame
 import sys, socket
-from pygame import Vector2, Rect
+from pygame import Vector2, Rect, Surface
 from pygame.sprite import *
 
 # Инициализация
 pygame.init()
 host, port = '26.68.85.151', 7891
-size = (800, 800)
-state, running = 0, True
-screen = pygame.display.set_mode(size)
+size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
+state, running = "Load", True
+screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
 screen.fill("black")
 
 
 # Функции
 def but1_func():
     global state
-    state = 2
+    state = "Play"
 
 
 def but2_func():
@@ -58,46 +58,48 @@ class TextUi(Sprite):
 
 
 class ButtonUi(Sprite):
-    base_image = pygame.Surface((200, 100))
-
     def __init__(self, group, meth, text="", position=(-1, -1), button_size=(200, 100), font_size=50,
                  txt_col=(255, 255, 255), col=(0, 0, 255)):
         super().__init__(group)
-        self.image = ButtonUi.base_image
+        self.image = Surface((200, 100))
         self.rect = self.image.get_rect()
         self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
         self.rect.size = button_size
         self.image.fill(col)
         self.meth = meth
-        self.text = text
         self.color = col
-        self.text_color = txt_col
         font = pygame.font.Font(None, font_size)
-        txt = font.render(self.text, True, self.text_color)
-        txt_rect = txt.get_rect()
-        txt_rect.center = Vector2(*self.rect.size) // 2
-        print(self.rect, txt_rect)
-        self.image.blit(txt, txt_rect)
+        self.text = font.render(text, True, txt_col)
+        self.text_rect = self.text.get_rect()
+        self.text_rect.center = Vector2(*self.rect.size) // 2
+        self.image.blit(self.text, self.text_rect)
 
     def update(self, events, *args, **kwargs):
         for event in events:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
                 self.meth()
+            if event.type == pygame.MOUSEMOTION:
+                if self.rect.collidepoint(*event.pos):
+                    self.image = Surface((200, 100))
+                    self.image.fill((0, 0, 200))
+                    self.image.blit(self.text, self.text_rect)
+                else:
+                    self.image = Surface((200, 100))
+                    self.image.fill((0, 0, 255))
+                    self.image.blit(self.text, self.text_rect)
 
 
 class Player(Sprite):
     try:
         img = pygame.image.load("data/player.png").convert_alpha()
         img = pygame.transform.scale(img, (100, 100))
-        base = pygame.Surface((100, 100))
-        base.fill("blue")
     except Exception as e:
         print(e)
         sys.exit(-1)
 
     def __init__(self, group, nick):
         super().__init__(group)
-        self.image = Player.base
+        self.image = Player.img
         self.nick = nick
         font = pygame.font.Font(None, 50)
         text = font.render(self.nick, True, (255, 255, 255))
@@ -128,7 +130,7 @@ class Player(Sprite):
             if event.type == pygame.KEYUP:
                 if event.key == pygame.K_SPACE:
                     self.ulta = False
-                    self.image = Player.base
+                    self.image = Player.img
                     font = pygame.font.Font(None, 50)
                     text = font.render(self.nick, True, (255, 255, 255))
                     rct = text.get_rect()
@@ -160,18 +162,21 @@ def main(window_main):
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
-    Scenes = [Group(), Group(), Group()]
+    Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Play": Group(), "Finish": Group()}
     is_connect, con_errs = False, 0
     fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
-    FonUi(Scenes[0], (10000, 10000))
-    FonUi(Scenes[1], (10000, 10000))
-    FonUi(Scenes[2], (10000, 10000))
-    TextUi(Scenes[0], "Waiting for connection", text_size=(500, 200))
-    ButtonUi(Scenes[1], but1_func, "Play", button_size=(200, 100))
-    ButtonUi(Scenes[1], but2_func, "Exit", button_size=(200, 100)).rect.center[1] += 100
-    player = Player(Scenes[2], "")
+    FonUi(Scenes["Load"], (2000, 2000))
+    FonUi(Scenes["Menu"], (2000, 2000))
+    FonUi(Scenes["Play"], (10000, 10000))
+    TextUi(Scenes["Load"], "Waiting for connection", text_size=(500, 200))
+    TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
+    ButtonUi(Scenes["Menu"], but1_func, "Play", button_size=(200, 100),
+             position=Vector2(*size) // 2 + Vector2(0, 200))
+    ButtonUi(Scenes["Menu"], but2_func, "Exit", button_size=(200, 100),
+             position=Vector2(*size) // 2 + Vector2(0, 300))
+    player = Player(Scenes["Play"], "")
     # Основной игровой цикл
     while running:
         events = pygame.event.get()
@@ -190,7 +195,7 @@ def main(window_main):
                 return -1
             log_en = ClientSocket.recv(2048)
             client_id = int(log_en.decode('utf-8'))
-            is_connect, state = True, 1
+            is_connect, state = True, "Menu"
         else:
             try:
                 # Взаимодействие с сервером
