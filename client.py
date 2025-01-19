@@ -1,4 +1,7 @@
+import struct
+
 import pygame
+import faulthandler
 import sys, socket
 from pygame import Vector2, Rect, Surface
 from pygame.sprite import *
@@ -7,18 +10,30 @@ from pygame.sprite import *
 pygame.init()
 host, port = '26.68.85.151', 7891
 size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
-state, running = "Load", True
+state, running, is_reg = "Load", True, False
 screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
 screen.fill("black")
+user = None
+try:
+    with open("user.dat", "rb") as f:
+        user = f.read().decode('utf-8').split('|')
+        user = [int(user[0]), user[1], user[2]]
+except Exception as e:
+    print(e)
 
 
 # Функции
-def but1_func():
+def but_reg():
+    global is_reg
+    is_reg = True
+
+
+def but_play():
     global state
     state = "Play"
 
 
-def but2_func():
+def but_exit():
     global running
     running = False
 
@@ -34,7 +49,6 @@ class FonUi(Sprite):
 
     def __init__(self, group, fon_size, pos=(0, 0)):
         super().__init__(group)
-        self.pos = pos
         self.image = pygame.Surface(fon_size)
         self.image.fill("black")
         for i in range(fon_size[1] // FonUi.r_img.size[1] + 2):
@@ -59,14 +73,16 @@ class TextUi(Sprite):
 
 class ButtonUi(Sprite):
     def __init__(self, group, meth, text="", position=(-1, -1), button_size=(200, 100), font_size=50,
-                 txt_col=(255, 255, 255), col=(0, 0, 255)):
+                 txt_col=(255, 255, 255), col=(0, 0, 255), meth_args=tuple(), meth_kwargs=dict.fromkeys(tuple(), 0)):
         super().__init__(group)
-        self.image = Surface((200, 100))
+        if meth_args is None:
+            meth_args = []
+        self.image = Surface(button_size)
         self.rect = self.image.get_rect()
         self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
-        self.rect.size = button_size
         self.image.fill(col)
         self.meth = meth
+        self.params = [meth_args, meth_kwargs]
         self.color = col
         font = pygame.font.Font(None, font_size)
         self.text = font.render(text, True, txt_col)
@@ -77,16 +93,59 @@ class ButtonUi(Sprite):
     def update(self, events, *args, **kwargs):
         for event in events:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
-                self.meth()
+                self.meth(*self.params[0], **self.params[1])
             if event.type == pygame.MOUSEMOTION:
                 if self.rect.collidepoint(*event.pos):
-                    self.image = Surface((200, 100))
+                    self.image = Surface(self.rect.size)
                     self.image.fill((0, 0, 200))
                     self.image.blit(self.text, self.text_rect)
                 else:
-                    self.image = Surface((200, 100))
+                    self.image = Surface(self.rect.size)
                     self.image.fill((0, 0, 255))
                     self.image.blit(self.text, self.text_rect)
+
+
+class InputUI(Sprite):
+    def __init__(self, group, position=(-1, -1), input_size=(200, 100), font_size=50, max_syms=50):
+        super().__init__(group)
+        self.image = Surface(input_size)
+        self.rect = self.image.get_rect()
+        self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
+        self.font = pygame.font.Font(None, font_size)
+        self.max_syms = max_syms
+        self.Active = False
+        self.text = ""
+        self.drawUI()
+
+    def update(self, events, *args, **kwargs):
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                self.Active = self.rect.collidepoint(event.pos)
+                self.drawUI()
+            if event.type == pygame.KEYDOWN and self.Active:
+                if event.key in (pygame.K_BACKSPACE, pygame.K_DELETE):
+                    self.text = self.text[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self.Active = False
+                elif len(self.text) < self.max_syms:
+                    self.text += event.unicode
+                self.drawUI()
+
+    def drawUI(self):
+        self.image = Surface(self.rect.size)
+        self.image.fill((255, 255, 255))
+        if not self.Active:
+            self.image.fill((0, 0, 0), Rect(2, 2, self.rect.size[0] - 4, self.rect.size[1] - 4))
+        else:
+            self.image.fill((50, 50, 50), Rect(2, 2, self.rect.size[0] - 4, self.rect.size[1] - 4))
+        text_image = self.font.render(self.text, True, (255, 255, 255))
+        text_rect = text_image.get_rect()
+        text_rect.center = Vector2(*self.rect.size) // 2
+        if text_rect.size[0] > self.rect.size[0] - 12:
+            text_rect.left = self.rect.size[0] - 12 - text_rect.size[0]
+        else:
+            text_rect.left = 6
+        self.image.blit(text_image, text_rect)
 
 
 class Player(Sprite):
@@ -158,54 +217,69 @@ class Player(Sprite):
 
 
 def main(window_main):
-    global state, running
+    global state, running, user
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
+    ClientSocket, client_id = None, None
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Play": Group(), "Finish": Group()}
-    is_connect, con_errs = False, 0
+    con_errs = 0
     fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
     FonUi(Scenes["Load"], (2000, 2000))
+    FonUi(Scenes["Register"], (2000, 2000))
     FonUi(Scenes["Menu"], (2000, 2000))
-    FonUi(Scenes["Play"], (10000, 10000))
+    FonUi(Scenes["Play"], (22000, 22000))
     TextUi(Scenes["Load"], "Waiting for connection", text_size=(500, 200))
+    TextUi(Scenes["Register"], "Вход/Регистрация", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
-    ButtonUi(Scenes["Menu"], but1_func, "Play", button_size=(200, 100),
-             position=Vector2(*size) // 2 + Vector2(0, 200))
-    ButtonUi(Scenes["Menu"], but2_func, "Exit", button_size=(200, 100),
-             position=Vector2(*size) // 2 + Vector2(0, 300))
+    loginUI = InputUI(Scenes["Register"], input_size=(400, 100))
+    passwordUI = InputUI(Scenes["Register"], position=Vector2(size[0] // 2, size[1] // 2 + 100), input_size=(400, 100))
+    ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
+             position=Vector2(size[0] // 2, size[1] - 200))
+    ButtonUi(Scenes["Menu"], but_play, "Мультиплеер", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 200))
+    ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 100))
     player = Player(Scenes["Play"], "")
+    # Подключение
+    ClientSocket = socket.socket()
+    Scenes[state].draw(screen)
+    pygame.display.flip()
+    try:
+        ClientSocket.connect((host, port))
+    except socket.error as error:
+        print(str(error))
+        return -1
+    if user:
+        ClientSocket.send(str.encode(f'reg {[user[1], user[2]]}'))
+        state = "Menu"
+    else:
+        state = "Register"
     # Основной игровой цикл
     while running:
         events = pygame.event.get()
-        if pygame.QUIT in [e.type for e in events]:
+        if pygame.QUIT in [i.type for i in events]:
             running = False
 
-        if not is_connect:
-            # Подключение
-            ClientSocket = socket.socket()
-            Scenes[state].draw(screen)
-            pygame.display.flip()
-            try:
-                ClientSocket.connect((host, port))
-            except socket.error as e:
-                print(str(e))
-                return -1
-            log_en = ClientSocket.recv(2048)
-            client_id = int(log_en.decode('utf-8'))
-            is_connect, state = True, "Menu"
-        else:
+        if not user and is_reg:
+            ClientSocket.send(str.encode(f'reg {[loginUI.text, str(hash(passwordUI.text))]}'))
+            log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=1)
+            if log[0] == "reg" and log[1] != "-1":
+                user = [int(log[1]), loginUI.text, str(hash(passwordUI.text))]
+                with open("user.dat", "wb") as f:
+                    f.write(str.encode("|".join(map(str, user))))
+        if state == "Play":
             try:
                 # Взаимодействие с сервером
                 ClientSocket.send(str.encode(f'[{client_id}, {player.rect.center}, {player.ulta}, {player.nick}]'))
                 log = eval(ClientSocket.recv(2048).decode('utf-8'))
                 con_errs = 0
-            except Exception as e:
+            except Exception as error:
                 con_errs += 1
                 if con_errs >= 60:
-                    print(str(e))
+                    print(str(error))
                     return -1
 
         Scenes[state].update(events)
@@ -219,4 +293,5 @@ def main(window_main):
 
 
 if __name__ == '__main__':
-    sys.exit(main("Онлайн"))
+    faulthandler.enable()
+    sys.exit(main("BlackHole.io"))
