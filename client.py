@@ -10,22 +10,23 @@ from pygame.sprite import *
 pygame.init()
 host, port = '26.68.85.151', 7891
 size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
-state, running, is_reg = "Load", True, False
+state, running = "Load", True
 screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
 screen.fill("black")
-user = None
 try:
     with open("user.dat", "rb") as f:
         user = f.read().decode('utf-8').split('|')
         user = [int(user[0]), user[1], user[2]]
 except Exception as e:
+    user = None
     print(e)
+print(user)
 
 
 # Функции
-def but_reg():
-    global is_reg
-    is_reg = True
+def but_reg(login, password):
+    global user
+    user = [0, login.text, str(hash(password.text))]
 
 
 def but_play():
@@ -223,7 +224,7 @@ def main(window_main):
     # Создание переменных
     ClientSocket, client_id = None, None
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Play": Group(), "Finish": Group()}
-    con_errs = 0
+    con_errs, is_reg = 0, False
     fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
@@ -237,7 +238,7 @@ def main(window_main):
     loginUI = InputUI(Scenes["Register"], input_size=(400, 100))
     passwordUI = InputUI(Scenes["Register"], position=Vector2(size[0] // 2, size[1] // 2 + 100), input_size=(400, 100))
     ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
-             position=Vector2(size[0] // 2, size[1] - 200))
+             position=Vector2(size[0] // 2, size[1] - 200), meth_args=(loginUI, passwordUI))
     ButtonUi(Scenes["Menu"], but_play, "Мультиплеер", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 200))
     ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
@@ -252,10 +253,7 @@ def main(window_main):
     except socket.error as error:
         print(str(error))
         return -1
-    if user:
-        ClientSocket.send(str.encode(f'reg {[user[1], user[2]]}'))
-        state = "Menu"
-    else:
+    if not user:
         state = "Register"
     # Основной игровой цикл
     while running:
@@ -263,13 +261,18 @@ def main(window_main):
         if pygame.QUIT in [i.type for i in events]:
             running = False
 
-        if not user and is_reg:
-            ClientSocket.send(str.encode(f'reg {[loginUI.text, str(hash(passwordUI.text))]}'))
-            log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=1)
-            if log[0] == "reg" and log[1] != "-1":
-                user = [int(log[1]), loginUI.text, str(hash(passwordUI.text))]
+        if not is_reg and user:
+            ClientSocket.send(str.encode(f'reg {[user[1], user[2]]}'))
+            log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=2)
+            if log[0] == "reg" and log[1] == "True":
+                state = "Menu"
+                user[0] = int(log[2])
                 with open("user.dat", "wb") as f:
                     f.write(str.encode("|".join(map(str, user))))
+                is_reg = True
+            else:
+                state = "Register"
+                user = None
         if state == "Play":
             try:
                 # Взаимодействие с сервером

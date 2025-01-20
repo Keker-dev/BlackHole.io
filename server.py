@@ -70,16 +70,21 @@ ServerSocket.listen(100)
 def threaded_client(connection):
     con = sqlite3.connect("users.db")
     cur = con.cursor()
-    cnt_ers, is_reg = 0, False
+    cnt_ers, cur_pl = 0, None
     # Цикл общения клиента и сервера во время игры
     while True:
-        log = connection.recv(2048).decode('utf-8').split(" ", maxsplit=1)
-        if log[0] == "reg":
+        try:
+            log = connection.recv(2048).decode('utf-8').split(" ", maxsplit=1)
+        except ConnectionAbortedError:
+            print(1)
+            break
+        if not cur_pl and log[0] == "reg":
             logn, pasw = eval(log[1])
             pl = cur.execute(f"""SELECT Login, Password, Online, Id FROM Users 
             WHERE Login = '{logn}' AND Password = '{pasw}'""").fetchall()
             if len(pl) == 1 and pl[0][2] == 0:
-                connection.send(str.encode(f"reg {pl[0][3]}"))
+                connection.send(str.encode(f"reg True {pl[0][3]}"))
+                cur_pl = [pl[0][3], pl[0][0], pl[0][1]]
                 cur.execute(f"UPDATE Users SET Online = 1 WHERE Login = '{logn}' AND Password = '{pasw}'")
             elif len(pl) == 0:
                 pl = list(map(lambda a: a[0], cur.execute(f"SELECT Id FROM Users").fetchall()))
@@ -88,10 +93,17 @@ def threaded_client(connection):
                 pl = max(pl)
                 cur.execute("INSERT INTO Users(Id, Login, Password, Online, Stats) VALUES(?, ?, ?, ?, ?)",
                             [pl, logn, pasw, 1, ""])
-                connection.send(str.encode(f"reg {pl}"))
+                cur_pl = [pl, logn, pasw]
+                connection.send(str.encode(f"reg True {pl}"))
             else:
-                connection.send(str.encode(f"reg -1"))
+                connection.send(str.encode(f"reg False 0"))
         con.commit()
+        # Проверка подключения
+        try:
+            connection.send(str.encode("0"))
+        except Exception as e:
+            print(e)
+            break
         # try:
         #     log = eval(log_de)
         #     players[log[0] - 1] = Player(log[0], log[1], log[2], log[3])
@@ -104,9 +116,10 @@ def threaded_client(connection):
         #     cnt_ers += 1
         #     if cnt_ers >= 10:
         #         break
-    print(f"Remove player with id={this_client_id}")
-    players[this_client_id - 1].pos = (50000, 50000)
-    players[this_client_id - 1].ulta = False
+    if cur_pl:
+        cur.execute(f"UPDATE Users SET Online = 0 WHERE Id = {cur_pl[0]}")
+        con.commit()
+        print(f"Set offline player with id = {cur_pl[0]}")
     con.close()
 
 
