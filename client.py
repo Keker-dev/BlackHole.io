@@ -1,5 +1,5 @@
 import struct
-
+import time
 import pygame
 import faulthandler
 import sys, socket
@@ -17,13 +17,16 @@ try:
     with open("user.dat", "rb") as f:
         user = f.read().decode('utf-8').split('|')
         user = [int(user[0]), user[1], user[2]]
-except Exception as e:
+except FileNotFoundError:
     user = None
-    print(e)
-print(user)
 
 
 # Функции
+def but_play_mode(buts):
+    for but in buts:
+        but.isActive = True
+
+
 def but_reg(login, password):
     global user
     user = [0, login.text, str(hash(password.text))]
@@ -31,7 +34,7 @@ def but_reg(login, password):
 
 def but_play():
     global state
-    state = "Play"
+    state = "Game"
 
 
 def but_exit():
@@ -63,47 +66,86 @@ class FonUi(Sprite):
 class TextUi(Sprite):
     def __init__(self, group, text, position=(-1, -1), text_size=(100, 100), font_size=50, color=(255, 255, 255)):
         super().__init__(group)
-        self.text = text
+        self._text = text
         self.color = color
-        font = pygame.font.Font(None, font_size)
-        self.image = font.render(self.text, True, self.color)
+        self.font = pygame.font.Font(None, font_size)
+        self.image = self.font.render(self._text, True, self.color)
         self.rect = self.image.get_rect()
         self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
         self.rect.size = text_size
 
+    @property
+    def text(self):
+        return self._text
+
+    @text.setter
+    def text(self, new_text):
+        self._text = new_text
+        self.image = self.font.render(self._text, True, self.color)
+
 
 class ButtonUi(Sprite):
     def __init__(self, group, meth, text="", position=(-1, -1), button_size=(200, 100), font_size=50,
-                 txt_col=(255, 255, 255), col=(0, 0, 255), meth_args=tuple(), meth_kwargs=dict.fromkeys(tuple(), 0)):
+                 txt_col=(255, 255, 255), meth_args=tuple(), meth_kwargs=dict.fromkeys(tuple(), 0)):
         super().__init__(group)
         if meth_args is None:
             meth_args = []
         self.image = Surface(button_size)
         self.rect = self.image.get_rect()
         self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
-        self.image.fill(col)
+        self.image.fill((0, 0, 255))
         self.meth = meth
         self.params = [meth_args, meth_kwargs]
-        self.color = col
         font = pygame.font.Font(None, font_size)
         self.text = font.render(text, True, txt_col)
         self.text_rect = self.text.get_rect()
         self.text_rect.center = Vector2(*self.rect.size) // 2
         self.image.blit(self.text, self.text_rect)
 
+    def draw_button(self, focus=False, col=(0, 0, 255), click_col=(0, 0, 200)):
+        self.image = Surface(self.rect.size)
+        self.image.fill(click_col if focus else col)
+        self.image.blit(self.text, self.text_rect)
+
     def update(self, events, *args, **kwargs):
+        focus = False
         for event in events:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
                 self.meth(*self.params[0], **self.params[1])
             if event.type == pygame.MOUSEMOTION:
-                if self.rect.collidepoint(*event.pos):
-                    self.image = Surface(self.rect.size)
-                    self.image.fill((0, 0, 200))
-                    self.image.blit(self.text, self.text_rect)
-                else:
-                    self.image = Surface(self.rect.size)
-                    self.image.fill((0, 0, 255))
-                    self.image.blit(self.text, self.text_rect)
+                focus = self.rect.collidepoint(*event.pos)
+                self.draw_button(focus)
+        return focus
+
+
+class AppearButton(ButtonUi):
+    def __init__(self, *args, appear_time=1000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._isActive = False
+        self.startTime = 0
+        self.appear_time = appear_time
+
+    def update(self, events, *args, **kwargs):
+        if self._isActive:
+            t = time.time() - self.startTime
+            is_focus = bool(super().update(events, *args, **kwargs))
+            alpha = t // self.appear_time
+            alpha = int(255 * (1 if alpha > 1 else alpha))
+            super().draw_button(is_focus, pygame.Color(0, 0, 255, a=alpha), pygame.Color(0, 0, 200, a=alpha))
+        else:
+            self.image = Surface((0, 0))
+
+    @property
+    def isActive(self):
+        return self._isActive
+
+    @isActive.setter
+    def isActive(self, val):
+        self._isActive = val
+        if self._isActive:
+            self.startTime = time.time()
+        else:
+            self.startTime = 0
 
 
 class InputUI(Sprite):
@@ -173,6 +215,16 @@ class Player(Sprite):
         self.pos = Vector2(0, 0)
         self.ulta = False
 
+    def set_nick(self, new_nick):
+        self.nick = new_nick
+        self.image = Player.img
+        font = pygame.font.Font(None, 50)
+        text = font.render(self.nick, True, (255, 255, 255))
+        rct = text.get_rect()
+        rct.center = (50, 50)
+        rct.size = (100, 100)
+        self.image.blit(text, rct)
+
     def update(self, events):
         for event in events:
             if event.type == pygame.KEYDOWN:
@@ -223,7 +275,7 @@ def main(window_main):
     pygame.display.set_caption(window_main)
     # Создание переменных
     ClientSocket, client_id = None, None
-    Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Play": Group(), "Finish": Group()}
+    Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group()}
     con_errs, is_reg = 0, False
     fps = 60
     clock = pygame.time.Clock()
@@ -231,22 +283,29 @@ def main(window_main):
     FonUi(Scenes["Load"], (2000, 2000))
     FonUi(Scenes["Register"], (2000, 2000))
     FonUi(Scenes["Menu"], (2000, 2000))
-    FonUi(Scenes["Play"], (22000, 22000))
+    FonUi(Scenes["Game"], (22000, 22000))
     TextUi(Scenes["Load"], "Waiting for connection", text_size=(500, 200))
     TextUi(Scenes["Register"], "Вход/Регистрация", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
-    TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
-    loginUI = InputUI(Scenes["Register"], input_size=(400, 100))
-    passwordUI = InputUI(Scenes["Register"], position=Vector2(size[0] // 2, size[1] // 2 + 100), input_size=(400, 100))
+    TextUi(Scenes["Register"], "Логин:", position=Vector2(size[0] // 2, size[1] // 2 - 100))
+    TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 50))
+    TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
+           position=Vector2(size[0] // 2, 200), font_size=100)
+    loginUI = InputUI(Scenes["Register"], input_size=(400, 100), position=Vector2(*size) // 2 + Vector2(0, -25))
+    passwordUI = InputUI(Scenes["Register"], position=Vector2(*size) // 2 + Vector2(0, 125), input_size=(400, 100))
     ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
              position=Vector2(size[0] // 2, size[1] - 200), meth_args=(loginUI, passwordUI))
-    ButtonUi(Scenes["Menu"], but_play, "Мультиплеер", button_size=(300, 100),
+    ButtonUi(Scenes["Menu"], but_play_mode, "Мультиплеер", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 400), meth_args=([def_mode],))
+    ButtonUi(Scenes["Menu"], but_play, "Синглплеер", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 300))
+    ButtonUi(Scenes["Menu"], but_play, "Настройки", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 200))
     ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 100))
-    player = Player(Scenes["Play"], "")
+    player = Player(Scenes["Game"], user[1] if user else "")
     # Подключение
     ClientSocket = socket.socket()
-    Scenes[state].draw(screen)
+    Scenes["Load"].draw(screen)
     pygame.display.flip()
     try:
         ClientSocket.connect((host, port))
@@ -269,11 +328,12 @@ def main(window_main):
                 user[0] = int(log[2])
                 with open("user.dat", "wb") as f:
                     f.write(str.encode("|".join(map(str, user))))
+                player.set_nick(user[1])
                 is_reg = True
             else:
                 state = "Register"
                 user = None
-        if state == "Play":
+        if state == "Game":
             try:
                 # Взаимодействие с сервером
                 ClientSocket.send(str.encode(f'[{client_id}, {player.rect.center}, {player.ulta}, {player.nick}]'))
