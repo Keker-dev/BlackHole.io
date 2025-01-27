@@ -3,14 +3,14 @@ import time
 import pygame
 import faulthandler
 import sys, socket
-from pygame import Vector2, Rect, Surface
+from pygame import Vector2, Rect, Surface, mixer
 from pygame.sprite import *
 
 # Инициализация
 pygame.init()
 host, port = '26.68.85.151', 7891
 size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
-state, running = "Load", True
+state, running, volume = "Load", True, 0.4
 screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
 screen.fill("black")
 try:
@@ -22,9 +22,19 @@ except FileNotFoundError:
 
 
 # Функции
+def but_sett():
+    global state
+    state = "Settings"
+
+
+def but_menu():
+    global state
+    state = "Menu"
+
+
 def but_play_mode(buts):
     for but in buts:
-        but.isActive = True
+        but.isActive = not but.isActive
 
 
 def but_reg(login, password):
@@ -85,6 +95,10 @@ class TextUi(Sprite):
 
 
 class ButtonUi(Sprite):
+    click_msc = mixer.Channel(1)
+    click_msc.set_volume(volume)
+    sound = mixer.Sound('data/click_music.mp3')
+
     def __init__(self, group, meth, text="", position=(-1, -1), button_size=(200, 100), font_size=50,
                  txt_col=(255, 255, 255), meth_args=tuple(), meth_kwargs=dict.fromkeys(tuple(), 0)):
         super().__init__(group)
@@ -96,26 +110,27 @@ class ButtonUi(Sprite):
         self.image.fill((0, 0, 255))
         self.meth = meth
         self.params = [meth_args, meth_kwargs]
+        self.focus = False
         font = pygame.font.Font(None, font_size)
         self.text = font.render(text, True, txt_col)
         self.text_rect = self.text.get_rect()
         self.text_rect.center = Vector2(*self.rect.size) // 2
         self.image.blit(self.text, self.text_rect)
 
-    def draw_button(self, focus=False, col=(0, 0, 255), click_col=(0, 0, 200)):
+    def draw_button(self, focus=False, col=(0, 0, 255, 255), click_col=(0, 0, 200, 255)):
         self.image = Surface(self.rect.size)
         self.image.fill(click_col if focus else col)
+        self.image.set_alpha(click_col[3] if focus else col[3])
         self.image.blit(self.text, self.text_rect)
 
     def update(self, events, *args, **kwargs):
-        focus = False
         for event in events:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+                ButtonUi.click_msc.play(ButtonUi.sound)
                 self.meth(*self.params[0], **self.params[1])
             if event.type == pygame.MOUSEMOTION:
-                focus = self.rect.collidepoint(*event.pos)
-                self.draw_button(focus)
-        return focus
+                self.focus = self.rect.collidepoint(*event.pos)
+                self.draw_button(self.focus)
 
 
 class AppearButton(ButtonUi):
@@ -127,11 +142,11 @@ class AppearButton(ButtonUi):
 
     def update(self, events, *args, **kwargs):
         if self._isActive:
-            t = time.time() - self.startTime
-            is_focus = bool(super().update(events, *args, **kwargs))
-            alpha = t // self.appear_time
+            t = int((time.time() - self.startTime) * 1000)
+            super().update(events, *args, **kwargs)
+            alpha = t / self.appear_time
             alpha = int(255 * (1 if alpha > 1 else alpha))
-            super().draw_button(is_focus, pygame.Color(0, 0, 255, a=alpha), pygame.Color(0, 0, 200, a=alpha))
+            super().draw_button(self.focus, (0, 0, 255, alpha), (0, 0, 200, alpha))
         else:
             self.image = Surface((0, 0))
 
@@ -146,6 +161,53 @@ class AppearButton(ButtonUi):
             self.startTime = time.time()
         else:
             self.startTime = 0
+
+
+class SliderUI(Sprite):
+    def __init__(self, group, num=0, position=(-1, -1), sl_size=(300, 100), point_size=(75, 100), font_size=50):
+        super().__init__(group)
+        self.rect = Rect(*position, *sl_size)
+        self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
+        self.num = num
+        self.focus = False
+        self.point_size = point_size
+        self.work_surf = (self.rect.size[0] - self.point_size[0]) / 100
+        self.font = pygame.font.Font(None, font_size)
+        self.draw_UI()
+
+    def draw_UI(self):
+        self.image = Surface(self.rect.size)
+        self.image.fill((100, 100, 100))
+        back = Surface((self.rect.size[0] // 100 * self.num if self.num else 0, self.rect.size[1]))
+        back.fill((255, 255, 255))
+        point = Surface(self.point_size)
+        point.fill((0, 0, 200) if self.focus else (0, 0, 255))
+        p_rect = point.get_rect()
+        p_rect.midleft = (self.num * self.work_surf if self.num else 0, self.rect.size[1] // 2)
+        txt = self.font.render(str(self.num), True, (255, 255, 255))
+        txt_rect = txt.get_rect()
+        txt_rect.center = Vector2(*p_rect.size) // 2
+        point.blit(txt, txt_rect)
+        self.image.blit(back, (0, 0))
+        self.image.blit(point, p_rect)
+
+    def update(self, events, *args, **kwargs):
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+                ButtonUi.click_msc.play(ButtonUi.sound)
+                self.num = round((event.pos[0] - self.rect.left - self.point_size[0] // 2) / self.work_surf)
+                self.num = self.num if self.num >= 0 else 0
+                self.num = self.num if self.num <= 100 else 100
+                self.focus = True
+                self.draw_UI()
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self.focus = False
+                self.draw_UI()
+            elif self.focus and event.type == pygame.MOUSEMOTION:
+                self.num = round((event.pos[0] - self.rect.left - self.point_size[0] // 2) / self.work_surf)
+                self.num = self.num if self.num >= 0 else 0
+                self.num = self.num if self.num <= 100 else 100
+                self.draw_UI()
 
 
 class InputUI(Sprite):
@@ -270,12 +332,16 @@ class Player(Sprite):
 
 
 def main(window_main):
-    global state, running, user
+    global state, running, user, volume
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
+    fon_msc = mixer.Channel(0)
+    fon_msc.set_volume(volume)
+    fon_msc.play(mixer.Sound('data/fon_music.mp3'), fade_ms=1000, loops=-1)
     ClientSocket, client_id = None, None
-    Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group()}
+    Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group(),
+              "Settings": Group()}
     con_errs, is_reg = 0, False
     fps = 60
     clock = pygame.time.Clock()
@@ -283,6 +349,7 @@ def main(window_main):
     FonUi(Scenes["Load"], (2000, 2000))
     FonUi(Scenes["Register"], (2000, 2000))
     FonUi(Scenes["Menu"], (2000, 2000))
+    FonUi(Scenes["Settings"], (2000, 2000))
     FonUi(Scenes["Game"], (22000, 22000))
     TextUi(Scenes["Load"], "Waiting for connection", text_size=(500, 200))
     TextUi(Scenes["Register"], "Вход/Регистрация", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
@@ -290,18 +357,29 @@ def main(window_main):
     TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 50))
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100)
+    TextUi(Scenes["Settings"], "Громкость:", text_size=(300, 100), position=Vector2(*size) // 2 + Vector2(0, -100))
     loginUI = InputUI(Scenes["Register"], input_size=(400, 100), position=Vector2(*size) // 2 + Vector2(0, -25))
     passwordUI = InputUI(Scenes["Register"], position=Vector2(*size) // 2 + Vector2(0, 125), input_size=(400, 100))
     ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
              position=Vector2(size[0] // 2, size[1] - 200), meth_args=(loginUI, passwordUI))
+    def_mode = AppearButton(Scenes["Menu"], but_play, "Доп. режим", button_size=(300, 100),
+                            position=Vector2(size[0] // 2 + 400, size[1] - 350))
+    dop_mode = AppearButton(Scenes["Menu"], but_play, "Обычный режим", button_size=(300, 100),
+                            position=Vector2(size[0] // 2 + 400, size[1] - 450))
+    edu_mode = AppearButton(Scenes["Menu"], but_play, "Обучение", button_size=(300, 100),
+                            position=Vector2(size[0] // 2 - 400, size[1] - 350))
+    bot_mode = AppearButton(Scenes["Menu"], but_play, "Игра с ботами", button_size=(300, 100),
+                            position=Vector2(size[0] // 2 - 400, size[1] - 250))
     ButtonUi(Scenes["Menu"], but_play_mode, "Мультиплеер", button_size=(300, 100),
-             position=Vector2(size[0] // 2, size[1] - 400), meth_args=([def_mode],))
-    ButtonUi(Scenes["Menu"], but_play, "Синглплеер", button_size=(300, 100),
-             position=Vector2(size[0] // 2, size[1] - 300))
-    ButtonUi(Scenes["Menu"], but_play, "Настройки", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 400), meth_args=([def_mode, dop_mode],))
+    ButtonUi(Scenes["Menu"], but_play_mode, "Синглплеер", button_size=(300, 100),
+             position=Vector2(size[0] // 2, size[1] - 300), meth_args=([edu_mode, bot_mode],))
+    ButtonUi(Scenes["Menu"], but_sett, "Настройки", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 200))
     ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 100))
+    ButtonUi(Scenes["Settings"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
+    vloume_sl = SliderUI(Scenes["Settings"], 50, sl_size=(300, 100))
     player = Player(Scenes["Game"], user[1] if user else "")
     # Подключение
     ClientSocket = socket.socket()
@@ -333,6 +411,10 @@ def main(window_main):
             else:
                 state = "Register"
                 user = None
+        if state == "Settings":
+            volume = 0.8 * (vloume_sl.num / 100)
+            fon_msc.set_volume(volume)
+            ButtonUi.click_msc.set_volume(volume)
         if state == "Game":
             try:
                 # Взаимодействие с сервером
