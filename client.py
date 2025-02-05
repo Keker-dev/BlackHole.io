@@ -1,27 +1,46 @@
 import struct
 import time
+import os
 import pygame
+import ctypes
+import hashlib
 import faulthandler
 import sys, socket
-from pygame import Vector2, Rect, Surface, mixer
+from pygame import Vector2, Rect, Surface, mixer, transform
 from pygame.sprite import *
 
 # Инициализация
 pygame.init()
 host, port = '26.68.85.151', 7891
+scale = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
 size = (pygame.display.Info().current_w, pygame.display.Info().current_h)
-state, running, volume = "Load", True, 0.4
-screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
+w_size = size
+resolutions = {(2560 // scale, 1440 // scale): "2560x1440", (1920 // scale, 1080 // scale): "1920x1080",
+               (1280 // scale, 720 // scale): "1280x720", (3840 // scale, 2160 // scale): "3840×2160"}
+if size not in resolutions:
+    resolutions[size] = f"{size[0]}x{size[1]}"
+state, running = "Load", True
+screen = pygame.display.set_mode(size, pygame.FULLSCREEN | pygame.HWSURFACE)
 screen.fill("black")
 try:
     with open("user.dat", "rb") as f:
-        user = f.read().decode('utf-8').split('|')
+        user = f.readline().decode("utf-8").replace("\n", "").replace("\r", "").split('|')
         user = [int(user[0]), user[1], user[2]]
-except FileNotFoundError:
+        volume = list(map(float, f.readline().decode("utf-8").split('|')))
+except Exception:
+    volume = [0.4, 0.4]
     user = None
 
 
 # Функции
+def set_display(n):
+    global w_size
+    if Vector2(*list(resolutions.keys())[n]).length() <= Vector2(*size).length():
+        w_size = list(resolutions.keys())[n]
+        return True
+    return False
+
+
 def but_sett():
     global state
     state = "Settings"
@@ -39,7 +58,7 @@ def but_play_mode(buts):
 
 def but_reg(login, password):
     global user
-    user = [0, login.text, str(hash(password.text))]
+    user = [0, login.text, hashlib.md5(password.text.encode()).hexdigest()]
 
 
 def but_play():
@@ -96,7 +115,7 @@ class TextUi(Sprite):
 
 class ButtonUi(Sprite):
     click_msc = mixer.Channel(1)
-    click_msc.set_volume(volume)
+    click_msc.set_volume(volume[1])
     sound = mixer.Sound('data/click_music.mp3')
 
     def __init__(self, group, meth, text="", position=(-1, -1), button_size=(200, 100), font_size=50,
@@ -161,6 +180,98 @@ class AppearButton(ButtonUi):
             self.startTime = time.time()
         else:
             self.startTime = 0
+
+
+class DropDownUI(Sprite):
+    def __init__(self, group, values, value, func, func_args=tuple(), func_kwargs=dict.fromkeys(tuple(), 0),
+                 position=(-1, -1), drop_size=(200, 100), font_size=50):
+        super().__init__(group)
+        self.image = Surface(drop_size)
+        self.rect = self.image.get_rect()
+        self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
+        self.font = pygame.font.Font(None, font_size)
+        self.Active = False
+        self.values = values
+        self.value = self.values[value]
+        self.curChoice = -1
+        self.func = func
+        self.params = [func_args, func_kwargs]
+        self.drawUI()
+
+    def update(self, events, *args, **kwargs):
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                rect = Rect(*self.rect.topleft, self.rect.width, self.rect.height * len(self.values))
+                if self.Active and rect.collidepoint(event.pos):
+                    new_cur = (event.pos[1] - self.rect.y) // self.rect.height
+                    if self.func(new_cur, *self.params[0], **self.params[1]):
+                        ButtonUi.click_msc.play(ButtonUi.sound)
+                        self.value = self.values[new_cur]
+                        self.Active = False
+                else:
+                    self.Active = self.rect.collidepoint(event.pos)
+                if not self.Active:
+                    self.curChoice = -1
+                self.drawUI()
+            if self.Active and event.type == pygame.MOUSEMOTION:
+                new_cur = (event.pos[1] - self.rect.y) // self.rect.height
+                self.curChoice = new_cur
+                self.drawUI()
+
+    def drawUI(self):
+        if not self.Active:
+            self.image = Surface(self.rect.size)
+            self.image.fill((255, 255, 255))
+            self.image.fill((0, 0, 0), Rect(2, 2, self.rect.width - 4, self.rect.height - 4))
+            text_image = self.font.render(self.value, True, (255, 255, 255))
+            text_rect = text_image.get_rect()
+            text_rect.center = Vector2(*self.rect.size) // 2
+            self.image.blit(text_image, text_rect)
+        else:
+            self.image = Surface((self.rect.width, self.rect.height * len(self.values)))
+            for i, text in enumerate(self.values):
+                img = Surface(self.rect.size)
+                rect = Rect(0, i * self.rect.height, *self.rect.size)
+                img.fill((255, 255, 255))
+                img.fill((0, 0, 0) if i != self.curChoice else (50, 50, 50),
+                         Rect(2, 2, self.rect.width - 4, self.rect.height - 4))
+                text_image = self.font.render(text, True, (255, 255, 255))
+                text_rect = text_image.get_rect()
+                text_rect.center = Vector2(*self.rect.size) // 2
+                img.blit(text_image, text_rect)
+                self.image.blit(img, rect)
+
+
+class ProgressBarUI(Sprite):
+    def __init__(self, group, value=0, max_value=100, position=(-1, -1), pb_size=(300, 100), font_size=50):
+        super().__init__(group)
+        self.rect = Rect(*position, *pb_size)
+        self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
+        self._value = value
+        self.max_value = max_value
+        self.font = pygame.font.Font(None, font_size)
+        self.draw_UI()
+
+    def draw_UI(self):
+        self.image = Surface(self.rect.size)
+        self.image.fill((100, 100, 100))
+        back = Surface((self.rect.size[0] // 100 * self._value if self._value else 0, self.rect.size[1]))
+        back.fill((0, 0, 255))
+        txt = self.font.render(str(self._value), True, (255, 255, 255))
+        txt_rect = txt.get_rect()
+        txt_rect.center = Vector2(*self.rect.size) // 2
+        self.image.blit(back, (0, 0))
+        self.image.blit(txt, txt_rect)
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        if 0 <= new_value <= self.max_value:
+            self._value = new_value
+            self.draw_UI()
 
 
 class SliderUI(Sprite):
@@ -256,12 +367,12 @@ class InputUI(Sprite):
 class Player(Sprite):
     try:
         img = pygame.image.load("data/player.png").convert_alpha()
-        img = pygame.transform.scale(img, (100, 100))
+        img = transform.scale(img, (100, 100))
     except Exception as e:
         print(e)
         sys.exit(-1)
 
-    def __init__(self, group, nick):
+    def __init__(self, group, nick, speed=10):
         super().__init__(group)
         self.image = Player.img
         self.nick = nick
@@ -275,6 +386,7 @@ class Player(Sprite):
         self.rect.center = Vector2(*size) // 2
         self.move = Vector2(0, 0)
         self.pos = Vector2(0, 0)
+        self.speed = speed
         self.ulta = False
 
     def set_nick(self, new_nick):
@@ -319,7 +431,12 @@ class Player(Sprite):
                     self.move.y -= 10
                 if event.key == pygame.K_w:
                     self.move.y += 10
-        self.rect = self.rect.move(*self.move)
+        if self.move.length():
+            move = self.move.normalize() * self.speed
+            move = Vector2(round(move[0]), round(move[1]))
+        else:
+            move = Vector2(0, 0)
+        self.rect = self.rect.move(*move)
         """if self.ulta and enemy.ulta:
             pass
         elif enemy.ulta:
@@ -337,8 +454,7 @@ def main(window_main):
     pygame.display.set_caption(window_main)
     # Создание переменных
     fon_msc = mixer.Channel(0)
-    fon_msc.set_volume(volume)
-    fon_msc.play(mixer.Sound('data/fon_music.mp3'), fade_ms=1000, loops=-1)
+    fon_msc.set_volume(volume[0])
     ClientSocket, client_id = None, None
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group(),
               "Settings": Group()}
@@ -351,15 +467,20 @@ def main(window_main):
     FonUi(Scenes["Menu"], (2000, 2000))
     FonUi(Scenes["Settings"], (2000, 2000))
     FonUi(Scenes["Game"], (22000, 22000))
-    TextUi(Scenes["Load"], "Waiting for connection", text_size=(500, 200))
+    pb_load = ProgressBarUI(Scenes["Load"], pb_size=(500, 100))
+    TextUi(Scenes["Load"], "Подключение", text_size=(500, 200),
+           position=Vector2(*size) // 2 + Vector2(0, 400))
     TextUi(Scenes["Register"], "Вход/Регистрация", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
-    TextUi(Scenes["Register"], "Логин:", position=Vector2(size[0] // 2, size[1] // 2 - 100))
-    TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 50))
+    TextUi(Scenes["Register"], "Логин:", position=Vector2(*size) // 2 - Vector2(0, 75))
+    TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 75))
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100)
-    TextUi(Scenes["Settings"], "Громкость:", text_size=(300, 100), position=Vector2(*size) // 2 + Vector2(0, -100))
-    loginUI = InputUI(Scenes["Register"], input_size=(400, 100), position=Vector2(*size) // 2 + Vector2(0, -25))
-    passwordUI = InputUI(Scenes["Register"], position=Vector2(*size) // 2 + Vector2(0, 125), input_size=(400, 100))
+    TextUi(Scenes["Settings"], "Громкость музыки:", text_size=(300, 100),
+           position=Vector2(*size) // 2 - Vector2(0, 75))
+    TextUi(Scenes["Settings"], "Громкость эффектов:", text_size=(300, 100),
+           position=Vector2(*size) // 2 - Vector2(0, 225))
+    loginUI = InputUI(Scenes["Register"], input_size=(400, 100))
+    passwordUI = InputUI(Scenes["Register"], position=Vector2(*size) // 2 + Vector2(0, 150), input_size=(400, 100))
     ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
              position=Vector2(size[0] // 2, size[1] - 200), meth_args=(loginUI, passwordUI))
     def_mode = AppearButton(Scenes["Menu"], but_play, "Доп. режим", button_size=(300, 100),
@@ -379,19 +500,33 @@ def main(window_main):
     ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 100))
     ButtonUi(Scenes["Settings"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
-    vloume_sl = SliderUI(Scenes["Settings"], 50, sl_size=(300, 100))
+    ButtonUi(Scenes["Game"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
+    DropDownUI(Scenes["Settings"], list(resolutions.values()), list(resolutions.values()).index(resolutions[size]),
+               set_display, position=Vector2(*size) // 2 + Vector2(0, 125), drop_size=(300, 100))
+    vloume_msc_sl = SliderUI(Scenes["Settings"], int(volume[0] / 0.8 * 100), sl_size=(300, 50))
+    vloume_eff_sl = SliderUI(Scenes["Settings"], int(volume[1] / 0.8 * 100), sl_size=(300, 50),
+                             position=Vector2(*size) // 2 - Vector2(0, 150))
     player = Player(Scenes["Game"], user[1] if user else "")
     # Подключение
-    ClientSocket = socket.socket()
-    Scenes["Load"].draw(screen)
-    pygame.display.flip()
-    try:
-        ClientSocket.connect((host, port))
-    except socket.error as error:
-        print(str(error))
-        return -1
-    if not user:
-        state = "Register"
+    for frame in range(200):
+        if frame < 50:
+            pb_load.value += 1
+        elif frame > 150:
+            pb_load.value += 3
+        if frame == 150:
+            ClientSocket = socket.socket()
+            try:
+                ClientSocket.connect((host, port))
+            except socket.error as error:
+                print(str(error))
+                return -1
+            if not user:
+                state = "Register"
+        Scenes["Load"].update(pygame.event.get())
+        screen.fill("black")
+        Scenes["Load"].draw(screen)
+        pygame.display.flip()
+        clock.tick(fps)
     # Основной игровой цикл
     while running:
         events = pygame.event.get()
@@ -399,22 +534,26 @@ def main(window_main):
             running = False
 
         if not is_reg and user:
-            ClientSocket.send(str.encode(f'reg {[user[1], user[2]]}'))
+            ClientSocket.send(str.encode(f'reg {[user[0], user[1], user[2]]}'))
             log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=2)
             if log[0] == "reg" and log[1] == "True":
                 state = "Menu"
                 user[0] = int(log[2])
                 with open("user.dat", "wb") as f:
-                    f.write(str.encode("|".join(map(str, user))))
+                    f.write(str.encode("|".join(map(str, user)) + "\n" + "|".join(map(str, volume))))
                 player.set_nick(user[1])
                 is_reg = True
             else:
                 state = "Register"
                 user = None
+            fon_msc.play(mixer.Sound('data/fon_music.mp3'), fade_ms=1000, loops=-1)
         if state == "Settings":
-            volume = 0.8 * (vloume_sl.num / 100)
-            fon_msc.set_volume(volume)
-            ButtonUi.click_msc.set_volume(volume)
+            volume[0] = 0.8 * (vloume_msc_sl.num / 100)
+            volume[1] = 0.8 * (vloume_eff_sl.num / 100)
+            fon_msc.set_volume(volume[0])
+            ButtonUi.click_msc.set_volume(volume[1])
+            with open("user.dat", "wb") as f:
+                f.write(str.encode("|".join(map(str, user)) + "\n" + "|".join(map(str, volume))))
         if state == "Game":
             try:
                 # Взаимодействие с сервером
@@ -426,10 +565,10 @@ def main(window_main):
                 if con_errs >= 60:
                     print(str(error))
                     return -1
-
         Scenes[state].update(events)
         screen.fill("black")
         Scenes[state].draw(screen)
+        transform.scale(transform.scale(screen, w_size), size, dest_surface=screen)
         pygame.display.flip()
         clock.tick(fps)
     pygame.quit()

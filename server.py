@@ -76,17 +76,15 @@ def threaded_client(connection):
         try:
             log = connection.recv(2048).decode('utf-8').split(" ", maxsplit=1)
         except ConnectionAbortedError:
-            print(1)
             break
         if not cur_pl and log[0] == "reg":
-            logn, pasw = eval(log[1])
-            pl = cur.execute(f"""SELECT Login, Password, Online, Id FROM Users 
-            WHERE Login = '{logn}' AND Password = '{pasw}'""").fetchall()
-            if len(pl) == 1 and pl[0][2] == 0:
+            id_pl, logn, pasw = eval(log[1])
+            pl = cur.execute(f"""SELECT Login, Password, Online, Id FROM Users WHERE Login = '{logn}'""").fetchall()
+            if len(pl) and pl[0][2] == 0 and pl[0][1] == pasw:
                 connection.send(str.encode(f"reg True {pl[0][3]}"))
-                cur_pl = [pl[0][3], pl[0][0], pl[0][1]]
-                cur.execute(f"UPDATE Users SET Online = 1 WHERE Login = '{logn}' AND Password = '{pasw}'")
-            elif len(pl) == 0:
+                cur_pl = [id_pl, logn, pasw]
+                cur.execute(f"UPDATE Users SET Online = 1 WHERE Id = {id_pl} AND Password = '{pasw}'")
+            elif not len(pl):
                 pl = list(map(lambda a: a[0], cur.execute(f"SELECT Id FROM Users").fetchall()))
                 if not pl:
                     pl = [0]
@@ -97,7 +95,9 @@ def threaded_client(connection):
                 connection.send(str.encode(f"reg True {pl}"))
             else:
                 connection.send(str.encode(f"reg False 0"))
-        con.commit()
+            con.commit()
+        if log[0] == "play":
+            pass
         # Проверка подключения
         try:
             connection.send(str.encode("0"))
