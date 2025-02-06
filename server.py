@@ -8,17 +8,18 @@ test_mode = input("Test mode(Enter=False, y=True): ")
 
 
 class Player:
-    def __init__(self, id_thread, pos=(0, 0), ulta=False, nickname=""):
+    def __init__(self, id_thread, pos=(0, 0), ulta=False, nickname="", is_dead=False):
         self.id = id_thread
         self.pos = pos
         self.ulta = ulta
         self.nick = nickname
+        self.is_dead = is_dead
 
     def __str__(self):
-        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}')"
+        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}', {self.is_dead})"
 
     def __repr__(self):
-        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}')"
+        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}', {self.is_dead})"
 
 
 class Room:
@@ -125,9 +126,9 @@ def threaded_client(connection):
             connection.send(str.encode(
                 f"check_room [{rooms[id_room].is_search()}, {len(rooms[id_room].players)}, {rooms[id_room].max_pls}]"))
         if log[0] == "move":
-            new_pos, new_ult = eval(log[1])
+            new_pos, new_ult, new_dead = eval(log[1])
             pl = rooms[id_room].find_player(cur_pl[0])
-            pl.pos, pl.ulta = new_pos, new_ult
+            pl.pos, pl.ulta, pl.is_dead = new_pos, new_ult, new_dead
             connection.send(str.encode(f"move {rooms[id_room].info()}"))
             print(rooms[id_room].info())
         # Проверка подключения
@@ -152,6 +153,8 @@ def threaded_client(connection):
         cur.execute(f"UPDATE Users SET Online = 0 WHERE Id = {cur_pl[0]}")
         con.commit()
         print(f"Set offline player with id = {cur_pl[0]}")
+        if id_room != -1:
+            rooms[id_room].find_player(cur_pl[0]).is_dead = True
     con.close()
 
 

@@ -438,6 +438,7 @@ class Player(Sprite):
         self.radius = 250
         self.spawned = False
         self.ulta = False
+        self.dead = False
 
     def set_nick(self, new_nick):
         self.nick = new_nick
@@ -462,12 +463,13 @@ class Player(Sprite):
             dist = dist.length() - self.rect.size[0]
             if dist <= self.radius:
                 ens.append(enemy)
-        """if not self.ulta and len(ens) == 1 and ens[0].ulta:
+        if not self.ulta and len(ens) == 1 and ens[0].ulta:
             move = ens[0].position - self.pos
-            if move.length() < 1:
+            if move.length() <= 5:
+                self.dead = True
                 return
             move = move.normalize() * self.speed * 1.5
-            self.pos += round_vector(move)"""
+            self.pos += round_vector(move)
         if self.ulta and len(ens) == 1 and ens[0].ulta:
             move = (ens[0].position - self.pos) // 2
             if move.length() < 1:
@@ -581,10 +583,10 @@ def main(window_main):
     TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 75))
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100)
-    TextUi(Scenes["Finish"], "Вы проиграли!", text_size=(500, 200),
+    finish_txt = TextUi(Scenes["Finish"], "Вы проиграли!", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100, color=(255, 0, 0))
-    TextUi(Scenes["Finish"], "Место: 10")
-    TextUi(Scenes["Finish"], "Игроков уничтожено: 0", text_size=(500, 200),
+    res_txt = TextUi(Scenes["Finish"], "Место: 10")
+    stats_txt = TextUi(Scenes["Finish"], "Игроков уничтожено: 0", text_size=(500, 200),
            position=Vector2(size[0] // 2, size[1] - 400))
     TextUi(Scenes["Settings"], "Громкость музыки:", text_size=(300, 100),
            position=Vector2(*size) // 2 - Vector2(0, 75))
@@ -699,24 +701,47 @@ def main(window_main):
             Enemys.update(events, player.pos)
             gm_fon.update_pos(player.pos)
             player.update_ult(Enemys)
-            server_send(ClientSocket, f'move [{player.pos}, {player.ulta}]')
+            server_send(ClientSocket, f'move [{player.pos}, {player.ulta}, {player.dead}]')
             log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
             if len(log) >= 2:
                 while log[1].endswith("0"):
                     log[1] = log[1][:-1]
                 log = [log[0], eval(log[1])]
                 if log[0] == "move":
-                    for id_en, pos, ult, nick in log[1]:
+                    cnt_live = 0
+                    for id_en, pos, ult, nick, dead in log[1]:
                         if id_en != user[0]:
                             for spr in Enemys:
                                 if spr.id_en == id_en:
-                                    spr.position = Vector2(*pos)
-                                    spr.ulta = ult
+                                    if not dead:
+                                        cnt_live += 1
+                                        spr.position = Vector2(*pos)
+                                        spr.ulta = ult
+                                    else:
+                                        Enemys.remove(spr)
                                     break
                             else:
-                                Enemy(Scenes["Game"], Enemys, id_en, nick, pos, ult)
+                                if not dead:
+                                    cnt_live += 1
+                                    Enemy(Scenes["Game"], Enemys, id_en, nick, pos, ult)
                         else:
                             player.spawn(pos)
+                    if player.dead:
+                        state = "Finish"
+                        pl_state = 1
+                        play_mode = None
+                        id_room = -1
+                        finish_txt.color = (255, 0, 0)
+                        finish_txt.text = "Вы проиграли!"
+                        res_txt.text = f"Место: {cnt_live + 1}"
+                    elif cnt_live == 0:
+                        state = "Finish"
+                        pl_state = 1
+                        play_mode = None
+                        id_room = -1
+                        finish_txt.color = (0, 255, 0)
+                        finish_txt.text = "Вы выиграли!"
+                        res_txt.text = f"Место: 1"
                     wait_resp = False
         Scenes[state].update(events)
         screen.fill("black")
