@@ -33,6 +33,10 @@ except Exception:
 
 
 # Функции
+def round_vector(v):
+    return Vector2(round(v.x), round(v.y))
+
+
 def server_send(sock, s):
     global wait_resp
     if not wait_resp:
@@ -431,6 +435,7 @@ class Player(Sprite):
         self.move = Vector2(0, 0)
         self.pos = Vector2(0, 0)
         self.speed = speed
+        self.radius = 250
         self.spawned = False
         self.ulta = False
 
@@ -449,6 +454,36 @@ class Player(Sprite):
             self.pos = pos
             print(1)
             self.spawned = True
+
+    def update_ult(self, enemys):
+        ens = []
+        for enemy in enemys:
+            dist = Vector2(*self.rect.center) - Vector2(*enemy.rect.center)
+            dist = dist.length() - self.rect.size[0]
+            if dist <= self.radius:
+                ens.append(enemy)
+        if not self.ulta and len(ens) == 1 and ens[0].ulta:
+            move = ens[0].position - self.pos
+            if move.length() < 1:
+                return
+            move = move.normalize() * self.speed * 1.5
+            self.pos += round_vector(move)
+        elif self.ulta and len(ens) == 1 and ens[0].ulta:
+            move = (ens[0].position - self.pos) // 2
+            if move.length() < 1:
+                return
+            move = move.rotate(45)
+            move = move.normalize() * self.speed * 1.5
+            self.pos += round_vector(move)
+        """if self.ulta and enemy.ulta:
+            pass
+        elif enemy.ulta:
+            move = Vector2(*enemy.rect.center) - Vector2(*self.rect.center)
+            if move.length() < 1:
+                return
+            move = move.normalize() * 10
+            move = (round(move.x), round(move.y))
+            self.rect = self.rect.move(*move)"""
 
     def update(self, events):
         for event in events:
@@ -484,20 +519,10 @@ class Player(Sprite):
                     self.move.y += 10
         if self.move.length():
             move = self.move.normalize() * self.speed
-            move = Vector2(round(move[0]), round(move[1]))
+            move = round_vector(move)
         else:
             move = Vector2(0, 0)
-        # self.rect = self.rect.move(*move)
         self.pos += move
-        """if self.ulta and enemy.ulta:
-            pass
-        elif enemy.ulta:
-            move = Vector2(*enemy.rect.center) - Vector2(*self.rect.center)
-            if move.length() < 1:
-                return
-            move = move.normalize() * 10
-            move = (round(move.x), round(move.y))
-            self.rect = self.rect.move(*move)"""
 
 
 class Enemy(Sprite):
@@ -522,20 +547,6 @@ class Enemy(Sprite):
             self.rect.center = self.position - args[0] + (Vector2(*size) // 2)
 
 
-class Camera:
-    def __init__(self):
-        self.dx = 0
-        self.dy = 0
-
-    def apply(self, obj):
-        obj.rect.x += self.dx
-        obj.rect.y += self.dy
-
-    def update(self, target):
-        self.dx = target
-        self.dy = -(target.rect.y + target.rect.h // 2 - size[1] // 2)
-
-
 def main(window_main):
     global state, running, user, volume, pl_state, play_mode, id_room, wait_resp
     # Создание экрана
@@ -547,7 +558,6 @@ def main(window_main):
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group(),
               "Settings": Group(), "Load_to_Game": Group()}
     Enemys = Group()
-    cam = Camera()
     con_errs, is_reg = 0, False
     fps = 60
     clock = pygame.time.Clock()
@@ -688,6 +698,7 @@ def main(window_main):
         if state == "Game":
             Enemys.update(events, player.pos)
             gm_fon.update_pos(player.pos)
+            player.update_ult(Enemys)
             server_send(ClientSocket, f'move [{player.pos}, {player.ulta}]')
             log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
             if len(log) >= 2:
