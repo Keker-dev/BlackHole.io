@@ -1,10 +1,8 @@
-import struct
 import time
 import os
 import pygame
 import ctypes
 import hashlib
-import faulthandler
 import sys, socket
 from pygame import Vector2, Rect, Surface, mixer, transform
 from pygame.sprite import *
@@ -20,6 +18,8 @@ resolutions = {(2560 // scale, 1440 // scale): "2560x1440", (1920 // scale, 1080
 if size not in resolutions:
     resolutions[size] = f"{size[0]}x{size[1]}"
 state, running = "Load", True
+pl_state, play_mode = 1, None
+id_room, wait_resp = -1, False
 screen = pygame.display.set_mode(size, pygame.FULLSCREEN | pygame.HWSURFACE)
 screen.fill("black")
 try:
@@ -33,6 +33,13 @@ except Exception:
 
 
 # Функции
+def server_send(sock, s):
+    global wait_resp
+    if not wait_resp:
+        sock.send(s.encode())
+        wait_resp = True
+
+
 def set_display(n):
     global w_size
     if Vector2(*list(resolutions.keys())[n]).length() <= Vector2(*size).length():
@@ -47,7 +54,10 @@ def but_sett():
 
 
 def but_menu():
-    global state
+    global state, pl_state, play_mode, id_room
+    pl_state = 1
+    id_room = -1
+    play_mode = None
     state = "Menu"
 
 
@@ -61,9 +71,10 @@ def but_reg(login, password):
     user = [0, login.text, hashlib.md5(password.text.encode()).hexdigest()]
 
 
-def but_play():
-    global state
-    state = "Game"
+def but_play(new_play_mode):
+    global state, play_mode
+    state = "Load_to_Game"
+    play_mode = new_play_mode
 
 
 def but_exit():
@@ -82,6 +93,7 @@ class FonUi(Sprite):
 
     def __init__(self, group, fon_size, pos=(0, 0)):
         super().__init__(group)
+        self.position = Vector2(*pos)
         self.image = pygame.Surface(fon_size)
         self.image.fill("black")
         for i in range(fon_size[1] // FonUi.r_img.size[1] + 2):
@@ -90,6 +102,38 @@ class FonUi(Sprite):
                 rct.topleft = (j * rct.size[0], i * rct.size[1])
                 self.image.blit(FonUi.img, rct)
         self.rect = Rect(*pos, *fon_size)
+
+    def update_pos(self, pl_pos):
+        self.rect.topleft = self.position - pl_pos
+
+
+class AnimationUI(Sprite):
+    def __init__(self, group, img_name, cnt_frames=20, speed=3, position=(-1, -1), anim_size=(128, 128)):
+        super().__init__(group)
+        self.image = Surface(anim_size)
+        self.rect = self.image.get_rect()
+        self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
+        self.speed = speed
+        self.frame = 0
+        self.imgs = []
+        self.cur_img = 0
+        for i in range(cnt_frames):
+            img = pygame.image.load(f"data/{img_name}{i}.png").convert()
+            img.set_colorkey(img.get_at((0, 0)))
+            img = transform.scale(img, anim_size)
+            self.imgs.append(img)
+        self.image.blit(self.imgs[self.cur_img], (0, 0))
+        self.image = self.image.convert()
+        self.image.set_colorkey(self.image.get_at((0, 0)))
+
+    def update(self, events, *args, **kwargs):
+        self.frame += 1
+        if self.frame % self.speed == 0:
+            self.cur_img = (self.cur_img + 1) % len(self.imgs)
+            self.image = Surface(self.rect.size)
+            self.image.blit(self.imgs[self.cur_img], (0, 0))
+            self.image = self.image.convert()
+            self.image.set_colorkey(self.image.get_at((0, 0)))
 
 
 class TextUi(Sprite):
@@ -374,7 +418,7 @@ class Player(Sprite):
 
     def __init__(self, group, nick, speed=10):
         super().__init__(group)
-        self.image = Player.img
+        self.image = Player.img.copy()
         self.nick = nick
         font = pygame.font.Font(None, 50)
         text = font.render(self.nick, True, (255, 255, 255))
@@ -387,11 +431,12 @@ class Player(Sprite):
         self.move = Vector2(0, 0)
         self.pos = Vector2(0, 0)
         self.speed = speed
+        self.spawned = False
         self.ulta = False
 
     def set_nick(self, new_nick):
         self.nick = new_nick
-        self.image = Player.img
+        self.image = Player.img.copy()
         font = pygame.font.Font(None, 50)
         text = font.render(self.nick, True, (255, 255, 255))
         rct = text.get_rect()
@@ -399,12 +444,18 @@ class Player(Sprite):
         rct.size = (100, 100)
         self.image.blit(text, rct)
 
+    def spawn(self, pos):
+        if not self.spawned:
+            self.pos = pos
+            print(1)
+            self.spawned = True
+
     def update(self, events):
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     self.ulta = True
-                    self.image = Player.img
+                    self.image = Player.img.copy()
                 if event.key == pygame.K_d:
                     self.move.x += 10
                 if event.key == pygame.K_a:
@@ -416,7 +467,7 @@ class Player(Sprite):
             if event.type == pygame.KEYUP:
                 if event.key == pygame.K_SPACE:
                     self.ulta = False
-                    self.image = Player.img
+                    self.image = Player.img.copy()
                     font = pygame.font.Font(None, 50)
                     text = font.render(self.nick, True, (255, 255, 255))
                     rct = text.get_rect()
@@ -436,7 +487,8 @@ class Player(Sprite):
             move = Vector2(round(move[0]), round(move[1]))
         else:
             move = Vector2(0, 0)
-        self.rect = self.rect.move(*move)
+        # self.rect = self.rect.move(*move)
+        self.pos += move
         """if self.ulta and enemy.ulta:
             pass
         elif enemy.ulta:
@@ -448,28 +500,71 @@ class Player(Sprite):
             self.rect = self.rect.move(*move)"""
 
 
+class Enemy(Sprite):
+    def __init__(self, group, enemys, id_enemy, nick, pos, ulta):
+        super().__init__(group)
+        self.add(enemys)
+        self.image = Player.img.copy()
+        self.nick = nick
+        self.id_en = id_enemy
+        font = pygame.font.Font(None, 50)
+        text = font.render(self.nick, True, (255, 255, 255))
+        rct = text.get_rect()
+        rct.center = (50, 50)
+        rct.size = (100, 100)
+        self.image.blit(text, rct)
+        self.rect = self.image.get_rect()
+        self.position = Vector2(*pos)
+        self.ulta = ulta
+
+    def update(self, events, *args, **kwargs):
+        if args:
+            self.rect.center = self.position - args[0] + (Vector2(*size) // 2)
+
+
+class Camera:
+    def __init__(self):
+        self.dx = 0
+        self.dy = 0
+
+    def apply(self, obj):
+        obj.rect.x += self.dx
+        obj.rect.y += self.dy
+
+    def update(self, target):
+        self.dx = target
+        self.dy = -(target.rect.y + target.rect.h // 2 - size[1] // 2)
+
+
 def main(window_main):
-    global state, running, user, volume
+    global state, running, user, volume, pl_state, play_mode, id_room, wait_resp
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
     fon_msc = mixer.Channel(0)
     fon_msc.set_volume(volume[0])
-    ClientSocket, client_id = None, None
+    ClientSocket = None
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group(),
-              "Settings": Group()}
+              "Settings": Group(), "Load_to_Game": Group()}
+    Enemys = Group()
+    cam = Camera()
     con_errs, is_reg = 0, False
     fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
-    FonUi(Scenes["Load"], (2000, 2000))
-    FonUi(Scenes["Register"], (2000, 2000))
-    FonUi(Scenes["Menu"], (2000, 2000))
-    FonUi(Scenes["Settings"], (2000, 2000))
-    FonUi(Scenes["Game"], (22000, 22000))
+    FonUi(Scenes["Load"], size)
+    FonUi(Scenes["Load_to_Game"], size)
+    FonUi(Scenes["Register"], size)
+    FonUi(Scenes["Menu"], size)
+    FonUi(Scenes["Settings"], size)
+    gm_fon = FonUi(Scenes["Game"], (22000, 22000), pos=(-11000, -11000))
     pb_load = ProgressBarUI(Scenes["Load"], pb_size=(500, 100))
     TextUi(Scenes["Load"], "Подключение", text_size=(500, 200),
            position=Vector2(*size) // 2 + Vector2(0, 400))
+    load_game_txt = TextUi(Scenes["Load_to_Game"], "Подключение", text_size=(500, 200),
+                           position=Vector2(size[0] // 2, size[1] - 400))
+    TextUi(Scenes["Load_to_Game"], "Поиск игры", text_size=(500, 200),
+           position=Vector2(size[0] // 2, 300))
     TextUi(Scenes["Register"], "Вход/Регистрация", text_size=(500, 200), position=Vector2(size[0] // 2, 200))
     TextUi(Scenes["Register"], "Логин:", position=Vector2(*size) // 2 - Vector2(0, 75))
     TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 75))
@@ -479,6 +574,8 @@ def main(window_main):
            position=Vector2(*size) // 2 - Vector2(0, 75))
     TextUi(Scenes["Settings"], "Громкость эффектов:", text_size=(300, 100),
            position=Vector2(*size) // 2 - Vector2(0, 225))
+    AnimationUI(Scenes["Load"], "Load_anim", position=Vector2(*size) - Vector2(70, 70))
+    AnimationUI(Scenes["Load_to_Game"], "Load_anim", position=Vector2(*size) - Vector2(70, 70))
     loginUI = InputUI(Scenes["Register"], input_size=(400, 100))
     passwordUI = InputUI(Scenes["Register"], position=Vector2(*size) // 2 + Vector2(0, 150), input_size=(400, 100))
     ButtonUi(Scenes["Register"], but_reg, "Вход", button_size=(200, 100),
@@ -486,7 +583,7 @@ def main(window_main):
     def_mode = AppearButton(Scenes["Menu"], but_play, "Доп. режим", button_size=(300, 100),
                             position=Vector2(size[0] // 2 + 400, size[1] - 350))
     dop_mode = AppearButton(Scenes["Menu"], but_play, "Обычный режим", button_size=(300, 100),
-                            position=Vector2(size[0] // 2 + 400, size[1] - 450))
+                            position=Vector2(size[0] // 2 + 400, size[1] - 450), meth_args=("Base",))
     edu_mode = AppearButton(Scenes["Menu"], but_play, "Обучение", button_size=(300, 100),
                             position=Vector2(size[0] // 2 - 400, size[1] - 350))
     bot_mode = AppearButton(Scenes["Menu"], but_play, "Игра с ботами", button_size=(300, 100),
@@ -534,7 +631,7 @@ def main(window_main):
             running = False
 
         if not is_reg and user:
-            ClientSocket.send(str.encode(f'reg {[user[0], user[1], user[2]]}'))
+            server_send(ClientSocket, f'reg {[user[0], user[1], user[2]]}')
             log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=2)
             if log[0] == "reg" and log[1] == "True":
                 state = "Menu"
@@ -543,10 +640,11 @@ def main(window_main):
                     f.write(str.encode("|".join(map(str, user)) + "\n" + "|".join(map(str, volume))))
                 player.set_nick(user[1])
                 is_reg = True
+                fon_msc.play(mixer.Sound('data/fon_music.mp3'), fade_ms=1000, loops=-1)
             else:
                 state = "Register"
                 user = None
-            fon_msc.play(mixer.Sound('data/fon_music.mp3'), fade_ms=1000, loops=-1)
+            wait_resp = False
         if state == "Settings":
             volume[0] = 0.8 * (vloume_msc_sl.num / 100)
             volume[1] = 0.8 * (vloume_eff_sl.num / 100)
@@ -554,17 +652,54 @@ def main(window_main):
             ButtonUi.click_msc.set_volume(volume[1])
             with open("user.dat", "wb") as f:
                 f.write(str.encode("|".join(map(str, user)) + "\n" + "|".join(map(str, volume))))
+        if state == "Load_to_Game":
+            if id_room != -1:
+                server_send(ClientSocket, f'check_room None')
+                log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
+                if len(log) >= 2:
+                    while log[1].endswith("0"):
+                        log[1] = log[1][:-1]
+                    log = [log[0], eval(log[1])]
+                    if log[0] == "check_room":
+                        if log[1][0]:
+                            load_game_txt.text = f"Найдено игроков {log[1][1]}/{log[1][2]}"
+                        else:
+                            state = "Game"
+                            pl_state = 3
+                    wait_resp = False
+            else:
+                pl_state = 2
+                server_send(ClientSocket, f'play {[user[0], user[1], play_mode]}')
+                log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
+                if len(log) >= 2:
+                    while log[1].endswith("0"):
+                        log[1] = log[1][:-1]
+                    log = [log[0], eval(log[1])]
+                    if log[0] == "play" and log[1][0]:
+                        id_room = log[1][1]
+                    wait_resp = False
         if state == "Game":
-            try:
-                # Взаимодействие с сервером
-                ClientSocket.send(str.encode(f'[{client_id}, {player.rect.center}, {player.ulta}, {player.nick}]'))
-                log = eval(ClientSocket.recv(2048).decode('utf-8'))
-                con_errs = 0
-            except Exception as error:
-                con_errs += 1
-                if con_errs >= 60:
-                    print(str(error))
-                    return -1
+            Enemys.update(events, player.pos)
+            gm_fon.update_pos(player.pos)
+            server_send(ClientSocket, f'move [{player.pos}, {player.ulta}]')
+            log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
+            if len(log) >= 2:
+                while log[1].endswith("0"):
+                    log[1] = log[1][:-1]
+                log = [log[0], eval(log[1])]
+                if log[0] == "move":
+                    for id_en, pos, ult, nick in log[1]:
+                        if id_en != user[0]:
+                            for spr in Enemys:
+                                if spr.id_en == id_en:
+                                    spr.position = Vector2(*pos)
+                                    spr.ulta = ult
+                                    break
+                            else:
+                                Enemy(Scenes["Game"], Enemys, id_en, nick, pos, ult)
+                        else:
+                            player.spawn(pos)
+                    wait_resp = False
         Scenes[state].update(events)
         screen.fill("black")
         Scenes[state].draw(screen)
@@ -577,5 +712,4 @@ def main(window_main):
 
 
 if __name__ == '__main__':
-    faulthandler.enable()
     sys.exit(main("BlackHole.io"))

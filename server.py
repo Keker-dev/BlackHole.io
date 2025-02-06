@@ -4,6 +4,8 @@ import random
 import sqlite3
 from _thread import *
 
+test_mode = input("Test mode(Enter=False, y=True): ")
+
 
 class Player:
     def __init__(self, id_thread, pos=(0, 0), ulta=False, nickname=""):
@@ -13,14 +15,14 @@ class Player:
         self.nick = nickname
 
     def __str__(self):
-        return f"({self.id}, {self.pos}, {self.ulta}, {self.nick})"
+        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}')"
 
     def __repr__(self):
-        return f"({self.id}, {self.pos}, {self.ulta}, {self.nick})"
+        return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}')"
 
 
 class Room:
-    def __init__(self, max_players=10, mode=False):
+    def __init__(self, max_players=10, mode="Base"):
         self.max_pls = max_players
         self.players = []
         self.mode = mode
@@ -28,22 +30,30 @@ class Room:
 
     def start_match(self):
         self.start = True
-        poses = [(-8000, -8000), (0, -8000), (8000, -8000), (-8000, 0), (-3000, 0), (3000, 0), (8000, 0), (-8000, 8000),
+        """poses = [(-8000, -8000), (0, -8000), (8000, -8000), (-8000, 0), (-3000, 0), (3000, 0), (8000, 0), (-8000, 8000),
                  (0, 8000), (8000, 8000)]
         for i in self.players:
-            i.pos = poses.pop(random.randint(0, len(poses) - 1))
+            i.pos = poses.pop(random.randint(0, len(poses) - 1))"""
 
     def add(self, obj):
         if len(self.players) < self.max_pls:
             self.players.append(obj)
+        if len(self.players) == self.max_pls:
+            self.start_match()
 
     def info(self):
         return str(self.players)
 
-    def update_pl(self, pl_id, *args):
-        pl = [i for i in range(len(self.players)) if self.players[i].id == pl_id]
-        if pl:
-            self.players[pl[0]] = Player(pl_id, *args)
+    def is_search(self):
+        return not self.start
+
+    def find_player(self, id_pl):
+        res = False
+        for i in self.players:
+            if i.id == id_pl:
+                res = i
+                break
+        return res
 
 
 rooms = []
@@ -71,6 +81,7 @@ def threaded_client(connection):
     con = sqlite3.connect("users.db")
     cur = con.cursor()
     cnt_ers, cur_pl = 0, None
+    id_room = -1
     # Цикл общения клиента и сервера во время игры
     while True:
         try:
@@ -96,8 +107,29 @@ def threaded_client(connection):
             else:
                 connection.send(str.encode(f"reg False 0"))
             con.commit()
-        if log[0] == "play":
-            pass
+        if log[0] == "play" and id_room == -1:
+            id_pl, nick, play_mode = eval(log[1])
+            for i, rm in enumerate(rooms):
+                if rm.mode == play_mode and rm.is_search() and not rm.find_player(id_pl):
+                    id_room = i
+                    rm.add(Player(id_pl, nickname=nick))
+                    break
+            if id_room == -1:
+                id_room = len(rooms)
+                rooms.append(Room(2 if test_mode else 10, play_mode))
+                rooms[id_room].add(Player(id_pl, nickname=nick))
+            connection.send(str.encode(f"play [True, {id_room}, {rooms[id_room].is_search()}]"))
+            cur.execute(f"UPDATE Users SET Online = 2 WHERE Id = {id_pl}")
+            con.commit()
+        if log[0] == "check_room" and id_room != -1:
+            connection.send(str.encode(
+                f"check_room [{rooms[id_room].is_search()}, {len(rooms[id_room].players)}, {rooms[id_room].max_pls}]"))
+        if log[0] == "move":
+            new_pos, new_ult = eval(log[1])
+            pl = rooms[id_room].find_player(cur_pl[0])
+            pl.pos, pl.ulta = new_pos, new_ult
+            connection.send(str.encode(f"move {rooms[id_room].info()}"))
+            print(rooms[id_room].info())
         # Проверка подключения
         try:
             connection.send(str.encode("0"))
