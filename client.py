@@ -462,18 +462,18 @@ class Player(Sprite):
             dist = dist.length() - self.rect.size[0]
             if dist <= self.radius:
                 ens.append(enemy)
-        if not self.ulta and len(ens) == 1 and ens[0].ulta:
+        """if not self.ulta and len(ens) == 1 and ens[0].ulta:
             move = ens[0].position - self.pos
             if move.length() < 1:
                 return
             move = move.normalize() * self.speed * 1.5
-            self.pos += round_vector(move)
-        elif self.ulta and len(ens) == 1 and ens[0].ulta:
+            self.pos += round_vector(move)"""
+        if self.ulta and len(ens) == 1 and ens[0].ulta:
             move = (ens[0].position - self.pos) // 2
             if move.length() < 1:
                 return
-            move = move.rotate(45)
-            move = move.normalize() * self.speed * 1.5
+            move = move.rotate(60 if move.length() > 50 else 90)
+            move = move.normalize() * self.speed
             self.pos += round_vector(move)
         """if self.ulta and enemy.ulta:
             pass
