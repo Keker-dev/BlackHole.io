@@ -558,6 +558,7 @@ def main(window_main):
     FonUi(Scenes["Menu"], size)
     FonUi(Scenes["Settings"], size)
     gm_fon = FonUi(Scenes["Game"], (22000, 22000), pos=(-11000, -11000))
+    FonUi(Scenes["Finish"], size)
     pb_load = ProgressBarUI(Scenes["Load"], pb_size=(500, 100))
     TextUi(Scenes["Load"], "Подключение", text_size=(500, 200),
            position=Vector2(*size) // 2 + Vector2(0, 400))
@@ -570,6 +571,11 @@ def main(window_main):
     TextUi(Scenes["Register"], "Пароль:", position=Vector2(*size) // 2 + Vector2(0, 75))
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100)
+    TextUi(Scenes["Finish"], "Вы проиграли!", text_size=(500, 200),
+           position=Vector2(size[0] // 2, 200), font_size=100, color=(255, 0, 0))
+    TextUi(Scenes["Finish"], "Место: 10")
+    TextUi(Scenes["Finish"], "Игроков уничтожено: 0", text_size=(500, 200),
+           position=Vector2(size[0] // 2, size[1] - 400))
     TextUi(Scenes["Settings"], "Громкость музыки:", text_size=(300, 100),
            position=Vector2(*size) // 2 - Vector2(0, 75))
     TextUi(Scenes["Settings"], "Громкость эффектов:", text_size=(300, 100),
@@ -598,6 +604,7 @@ def main(window_main):
              position=Vector2(size[0] // 2, size[1] - 100))
     ButtonUi(Scenes["Settings"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
     ButtonUi(Scenes["Game"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
+    ButtonUi(Scenes["Finish"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
     DropDownUI(Scenes["Settings"], list(resolutions.values()), list(resolutions.values()).index(resolutions[size]),
                set_display, position=Vector2(*size) // 2 + Vector2(0, 125), drop_size=(300, 100))
     vloume_msc_sl = SliderUI(Scenes["Settings"], int(volume[0] / 0.8 * 100), sl_size=(300, 50))
