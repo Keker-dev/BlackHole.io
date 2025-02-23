@@ -108,7 +108,7 @@ def threaded_client(connection):
             else:
                 connection.send(str.encode(f"reg False 0"))
             con.commit()
-        if log[0] == "play" and id_room == -1:
+        if log[0] == "play" and id_room == -1 and cur_pl:
             id_pl, nick, play_mode = eval(log[1])
             for i, rm in enumerate(rooms):
                 if rm.mode == play_mode and rm.is_search() and not rm.find_player(id_pl):
@@ -122,15 +122,23 @@ def threaded_client(connection):
             connection.send(str.encode(f"play [True, {id_room}, {rooms[id_room].is_search()}]"))
             cur.execute(f"UPDATE Users SET Online = 2 WHERE Id = {id_pl}")
             con.commit()
-        if log[0] == "check_room" and id_room != -1:
+        if log[0] == "check_room" and id_room != -1 and cur_pl:
             connection.send(str.encode(
                 f"check_room [{rooms[id_room].is_search()}, {len(rooms[id_room].players)}, {rooms[id_room].max_pls}]"))
-        if log[0] == "move":
+        if log[0] == "move" and cur_pl:
             new_pos, new_ult, new_dead = eval(log[1])
             pl = rooms[id_room].find_player(cur_pl[0])
             pl.pos, pl.ulta, pl.is_dead = new_pos, new_ult, new_dead
             connection.send(str.encode(f"move {rooms[id_room].info()}"))
             print(rooms[id_room].info())
+        if log[0] == "logout" and cur_pl:
+            cur.execute(f"UPDATE Users SET Online = 0 WHERE Id = {cur_pl[0]}")
+            con.commit()
+            print(f"Set offline player with id = {cur_pl[0]}")
+            if id_room != -1:
+                rooms[id_room].find_player(cur_pl[0]).is_dead = True
+            cur_pl = None
+            id_room = -1
         # Проверка подключения
         try:
             connection.send(str.encode("0"))

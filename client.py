@@ -20,6 +20,7 @@ if size not in resolutions:
 state, running = "Load", True
 pl_state, play_mode = 1, None
 id_room, wait_resp = -1, False
+is_reg, ClientSocket = False, None
 screen = pygame.display.set_mode(size, pygame.FULLSCREEN | pygame.HWSURFACE)
 screen.fill("black")
 try:
@@ -37,10 +38,10 @@ def round_vector(v):
     return Vector2(round(v.x), round(v.y))
 
 
-def server_send(sock, s):
-    global wait_resp
+def server_send(s):
+    global wait_resp, ClientSocket
     if not wait_resp:
-        sock.send(s.encode())
+        ClientSocket.send(s.encode())
         wait_resp = True
 
 
@@ -50,6 +51,17 @@ def set_display(n):
         w_size = list(resolutions.keys())[n]
         return True
     return False
+
+
+def delete_user():
+    global state, user, id_room, is_reg
+    with open("user.dat", "w") as f:
+        f.write("")
+    server_send("logout")
+    is_reg = False
+    user = None
+    state = "Register"
+    id_room = -1
 
 
 def but_sett():
@@ -86,6 +98,69 @@ def but_exit():
     running = False
 
 
+def find_nearest(point, points):
+    cp_points = points[:]
+    while point in cp_points:
+        cp_points.remove(point)
+    return sorted(cp_points, key=lambda a: a.distance_to(point))
+
+
+def find_cross(v1, v2):
+    cross_p = LineString(v1).intersection(LineString(v2))
+    if cross_p:
+        return Vector2(cross_p.x, cross_p.y)
+
+
+def find_biss(v1, v2):
+    if v1.length() and v2.length():
+        ang = [v1.angle_to(Vector2(0, 1)), v2.angle_to(Vector2(0, 1))]
+        ang = list(map(lambda a: (360 + a) % 360, ang))
+        ang = sum(ang) / 2
+        res = Vector2(0, 1).rotate(-ang)
+        if not find_cross([(0, 0), res * 1000], [v1, v2]):
+            res = Vector2(0, 1).rotate(-((ang + 180) % 360))
+        return res
+
+
+def find_center_circle(p1, p2, p3):
+    temp = p2[0] * p2[0] + p2[1] * p2[1]
+    bc = (p1[0] * p1[0] + p1[1] * p1[1] - temp) / 2
+    cd = (temp - p3[0] * p3[0] - p3[1] * p3[1]) / 2
+    det = (p1[0] - p2[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p2[1])
+    if abs(det) < 1.0e-6:
+        return None
+    cx = (bc * (p2[1] - p3[1]) - cd * (p1[1] - p2[1])) / det
+    cy = ((p1[0] - p2[0]) * cd - (p2[0] - p3[0]) * bc) / det
+    return Vector2(cx, cy)
+
+
+def find_cross_biss(points):
+    result = []
+    for i in range(len(points)):
+        ps1 = find_nearest(points[i], points[:])
+        biss1 = find_biss(ps1[0] - points[i], ps1[1] - points[i])
+        if not biss1:
+            continue
+        else:
+            biss1 *= 1000
+        ps2 = find_nearest(points[i - 1], points[:])
+        biss2 = find_biss(ps2[0] - points[i - 1], ps2[1] - points[i - 1])
+        if not biss2:
+            continue
+        else:
+            biss2 *= 1000
+        res = find_cross([points[i], points[i] + biss1], [points[i - 1], points[i - 1] + biss2])
+        if res:
+            result.append(res)
+    if result:
+        if len(result) == 1:
+            return result[0]
+        elif len(result) == 2:
+            return (result[0] - result[1]) / 2 + result[1]
+        else:
+            return find_center_circle(*result[:3])
+
+
 # Классы
 class FonUi(Sprite):
     try:
@@ -98,7 +173,7 @@ class FonUi(Sprite):
     def __init__(self, group, fon_size, pos=(0, 0)):
         super().__init__(group)
         self.position = Vector2(*pos)
-        self.image = pygame.Surface(fon_size)
+        self.image = Surface(fon_size)
         self.image.fill("black")
         for i in range(fon_size[1] // FonUi.r_img.size[1] + 2):
             for j in range(fon_size[0] // FonUi.r_img.size[0] + 2):
@@ -109,6 +184,43 @@ class FonUi(Sprite):
 
     def update_pos(self, pl_pos):
         self.rect.topleft = self.position - pl_pos
+
+
+class Border(Sprite):
+    image = Surface((1568, 328))
+    img = pygame.image.load(f"data/Asteroids.png").convert_alpha()
+    image.blit(img, (0, 0))
+    image.blit(transform.flip(img, False, True), (0, 164))
+    image = image.convert()
+    image.set_colorkey(image.get_at((0, 0)))
+
+    def __init__(self, group, borders, length, pos=(0, 0), angle=0, speed=1):
+        super().__init__(group)
+        self.add(borders)
+        self.speed = speed
+        self.offset = 0
+        self.angle = angle
+        self.position = Vector2(*pos)
+        self.rect = Rect(0, 0, length, 328)
+        self.rect.center = pos
+        self.draw_border()
+
+    def draw_border(self):
+        self.image = Surface((self.rect.w, 328))
+        for i in range(-1, self.rect.w // 1568 + 1):
+            self.image.blit(Border.image, (i * 1568 + self.offset, 0))
+        self.image = self.image.convert()
+        self.image.set_colorkey(self.image.get_at((0, 0)))
+
+    def update(self, events, *args, **kwargs):
+        if args:
+            pl_pos = args[0]
+            self.rect.center = self.position - pl_pos
+            self.offset = (self.offset + self.speed) % self.rect.w
+            self.draw_border()
+
+    def draw(self, wind):
+        wind.blit(transform.rotate(self.image, self.angle), self.rect.center)
 
 
 class AnimationUI(Sprite):
@@ -453,7 +565,6 @@ class Player(Sprite):
     def spawn(self, pos):
         if not self.spawned:
             self.pos = pos
-            print(1)
             self.spawned = True
 
     def update_ult(self, enemys):
@@ -477,15 +588,6 @@ class Player(Sprite):
             move = move.rotate(60 if move.length() > 50 else 90)
             move = move.normalize() * self.speed
             self.pos += round_vector(move)
-        """if self.ulta and enemy.ulta:
-            pass
-        elif enemy.ulta:
-            move = Vector2(*enemy.rect.center) - Vector2(*self.rect.center)
-            if move.length() < 1:
-                return
-            move = move.normalize() * 10
-            move = (round(move.x), round(move.y))
-            self.rect = self.rect.move(*move)"""
 
     def update(self, events):
         for event in events:
@@ -550,17 +652,16 @@ class Enemy(Sprite):
 
 
 def main(window_main):
-    global state, running, user, volume, pl_state, play_mode, id_room, wait_resp
+    global state, running, user, volume, pl_state, play_mode, id_room, wait_resp, is_reg, ClientSocket
     # Создание экрана
     pygame.display.set_caption(window_main)
     # Создание переменных
     fon_msc = mixer.Channel(0)
     fon_msc.set_volume(volume[0])
-    ClientSocket = None
     Scenes = {"Load": Group(), "Register": Group(), "Menu": Group(), "Game": Group(), "Finish": Group(),
               "Settings": Group(), "Load_to_Game": Group()}
     Enemys = Group()
-    con_errs, is_reg = 0, False
+    Borders = Group()
     fps = 60
     clock = pygame.time.Clock()
     # Конфигурация сцен
@@ -584,10 +685,10 @@ def main(window_main):
     TextUi(Scenes["Menu"], "BlackHole.io", text_size=(500, 200),
            position=Vector2(size[0] // 2, 200), font_size=100)
     finish_txt = TextUi(Scenes["Finish"], "Вы проиграли!", text_size=(500, 200),
-           position=Vector2(size[0] // 2, 200), font_size=100, color=(255, 0, 0))
+                        position=Vector2(size[0] // 2, 200), font_size=100, color=(255, 0, 0))
     res_txt = TextUi(Scenes["Finish"], "Место: 10")
     stats_txt = TextUi(Scenes["Finish"], "Игроков уничтожено: 0", text_size=(500, 200),
-           position=Vector2(size[0] // 2, size[1] - 400))
+                       position=Vector2(size[0] // 2, size[1] - 400))
     TextUi(Scenes["Settings"], "Громкость музыки:", text_size=(300, 100),
            position=Vector2(*size) // 2 - Vector2(0, 75))
     TextUi(Scenes["Settings"], "Громкость эффектов:", text_size=(300, 100),
@@ -614,6 +715,8 @@ def main(window_main):
              position=Vector2(size[0] // 2, size[1] - 200))
     ButtonUi(Scenes["Menu"], but_exit, "Выход", button_size=(300, 100),
              position=Vector2(size[0] // 2, size[1] - 100))
+    ButtonUi(Scenes["Settings"], delete_user, "Выйти из аккаунта", position=(size[0] // 2, size[1] - 200),
+             button_size=(350, 100))
     ButtonUi(Scenes["Settings"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
     ButtonUi(Scenes["Game"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
     ButtonUi(Scenes["Finish"], but_menu, "Меню", button_size=(100, 100), position=Vector2(50, 50))
@@ -623,6 +726,7 @@ def main(window_main):
     vloume_eff_sl = SliderUI(Scenes["Settings"], int(volume[1] / 0.8 * 100), sl_size=(300, 50),
                              position=Vector2(*size) // 2 - Vector2(0, 150))
     player = Player(Scenes["Game"], user[1] if user else "")
+    Border(Scenes["Game"], Borders, 10000)
     # Подключение
     for frame in range(200):
         if frame < 50:
@@ -650,7 +754,7 @@ def main(window_main):
             running = False
 
         if not is_reg and user:
-            server_send(ClientSocket, f'reg {[user[0], user[1], user[2]]}')
+            server_send(f'reg {[user[0], user[1], user[2]]}')
             log = ClientSocket.recv(2048).decode('utf-8').split(" ", maxsplit=2)
             if log[0] == "reg" and log[1] == "True":
                 state = "Menu"
@@ -673,7 +777,7 @@ def main(window_main):
                 f.write(str.encode("|".join(map(str, user)) + "\n" + "|".join(map(str, volume))))
         if state == "Load_to_Game":
             if id_room != -1:
-                server_send(ClientSocket, f'check_room None')
+                server_send(f'check_room None')
                 log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
                 if len(log) >= 2:
                     while log[1].endswith("0"):
@@ -688,7 +792,7 @@ def main(window_main):
                     wait_resp = False
             else:
                 pl_state = 2
-                server_send(ClientSocket, f'play {[user[0], user[1], play_mode]}')
+                server_send(f'play {[user[0], user[1], play_mode]}')
                 log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
                 if len(log) >= 2:
                     while log[1].endswith("0"):
@@ -698,10 +802,11 @@ def main(window_main):
                         id_room = log[1][1]
                     wait_resp = False
         if state == "Game":
+            Borders.update(events, player.pos)
             Enemys.update(events, player.pos)
             gm_fon.update_pos(player.pos)
             player.update_ult(Enemys)
-            server_send(ClientSocket, f'move [{player.pos}, {player.ulta}, {player.dead}]')
+            server_send(f'move [{player.pos}, {player.ulta}, {player.dead}]')
             log = ClientSocket.recv(2048).decode('utf-8').split(maxsplit=1)
             if len(log) >= 2:
                 while log[1].endswith("0"):
