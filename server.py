@@ -4,7 +4,7 @@ import random
 import sqlite3
 from _thread import *
 
-test_mode = input("Test mode(Enter=False, y=True): ")
+test_mode = int(test_mode if (test_mode := input("Test mode(Enter=False, int=True): ")) else 0)
 
 
 class Player:
@@ -14,6 +14,7 @@ class Player:
         self.ulta = ulta
         self.nick = nickname
         self.is_dead = is_dead
+        self.spawned = False
 
     def __str__(self):
         return f"({self.id}, {self.pos}, {self.ulta}, '{self.nick}', {self.is_dead})"
@@ -31,10 +32,10 @@ class Room:
 
     def start_match(self):
         self.start = True
-        """poses = [(-8000, -8000), (0, -8000), (8000, -8000), (-8000, 0), (-3000, 0), (3000, 0), (8000, 0), (-8000, 8000),
-                 (0, 8000), (8000, 8000)]
+        poses = [(-4000, -4000), (0, -4000), (4000, -4000), (-4000, 0), (-1500, 0), (1500, 0), (4000, 0), (-4000, 4000),
+                 (0, 4000), (4000, 4000)]
         for i in self.players:
-            i.pos = poses.pop(random.randint(0, len(poses) - 1))"""
+            i.pos = poses.pop(random.randint(0, len(poses) - 1))
 
     def add(self, obj):
         if len(self.players) < self.max_pls:
@@ -117,10 +118,10 @@ def threaded_client(connection):
                     break
             if id_room == -1:
                 id_room = len(rooms)
-                rooms.append(Room(2 if test_mode else 10, play_mode))
+                rooms.append(Room(test_mode if test_mode else 10, play_mode))
                 rooms[id_room].add(Player(id_pl, nickname=nick))
             connection.send(str.encode(f"play [True, {id_room}, {rooms[id_room].is_search()}]"))
-            cur.execute(f"UPDATE Users SET Online = 2 WHERE Id = {id_pl}")
+            cur.execute(f"UPDATE Users SET Online = {2 if rooms[id_room].is_search() else 3} WHERE Id = {id_pl}")
             con.commit()
         if log[0] == "check_room" and id_room != -1 and cur_pl:
             connection.send(str.encode(
@@ -128,7 +129,14 @@ def threaded_client(connection):
         if log[0] == "move" and cur_pl:
             new_pos, new_ult, new_dead = eval(log[1])
             pl = rooms[id_room].find_player(cur_pl[0])
-            pl.pos, pl.ulta, pl.is_dead = new_pos, new_ult, new_dead
+            if pl.spawned:
+                pl.pos = new_pos
+            else:
+                pl.spawned = True
+            pl.ulta, pl.is_dead = new_ult, new_dead
+            if not new_dead:
+                cur.execute(f"UPDATE Users SET Online = 1 WHERE Id = {cur_pl[0]}")
+                con.commit()
             connection.send(str.encode(f"move {rooms[id_room].info()}"))
             print(rooms[id_room].info())
         if log[0] == "logout" and cur_pl:

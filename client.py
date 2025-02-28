@@ -4,6 +4,7 @@ import pygame
 import ctypes
 import hashlib
 import sys, socket
+from shapely.geometry import LineString
 from pygame import Vector2, Rect, Surface, mixer, transform
 from pygame.sprite import *
 
@@ -183,7 +184,7 @@ class FonUi(Sprite):
         self.rect = Rect(*pos, *fon_size)
 
     def update_pos(self, pl_pos):
-        self.rect.topleft = self.position - pl_pos
+        self.rect.topleft = self.position - pl_pos + (Vector2(*size) // 2)
 
 
 class Border(Sprite):
@@ -194,33 +195,35 @@ class Border(Sprite):
     image = image.convert()
     image.set_colorkey(image.get_at((0, 0)))
 
-    def __init__(self, group, borders, length, pos=(0, 0), angle=0, speed=1):
+    def __init__(self, group, borders, length, pos=(0, 0), is_vert=False):
         super().__init__(group)
         self.add(borders)
-        self.speed = speed
-        self.offset = 0
-        self.angle = angle
+        self.is_vert = is_vert
         self.position = Vector2(*pos)
         self.rect = Rect(0, 0, length, 328)
         self.rect.center = pos
         self.draw_border()
 
     def draw_border(self):
-        self.image = Surface((self.rect.w, 328))
-        for i in range(-1, self.rect.w // 1568 + 1):
-            self.image.blit(Border.image, (i * 1568 + self.offset, 0))
-        self.image = self.image.convert()
-        self.image.set_colorkey(self.image.get_at((0, 0)))
+        if self.is_vert:
+            rct = Rect(0, 0, self.rect.h, self.rect.width)
+            rct.center = self.rect.center
+            self.rect = rct
+            self.image = Surface((self.rect.w, self.rect.h))
+            for i in range(self.rect.h // 1568 + 1):
+                self.image.blit(transform.rotate(Border.image, 90), (0, i * 1568))
+            self.image = self.image.convert()
+            self.image.set_colorkey(self.image.get_at((0, 0)))
+        else:
+            self.image = Surface((self.rect.w, self.rect.h))
+            for i in range(self.rect.w // 1568 + 1):
+                self.image.blit(Border.image, (i * 1568, 0))
+            self.image = self.image.convert()
+            self.image.set_colorkey(self.image.get_at((0, 0)))
 
     def update(self, events, *args, **kwargs):
         if args:
-            pl_pos = args[0]
-            self.rect.center = self.position - pl_pos
-            self.offset = (self.offset + self.speed) % self.rect.w
-            self.draw_border()
-
-    def draw(self, wind):
-        wind.blit(transform.rotate(self.image, self.angle), self.rect.center)
+            self.rect.center = self.position - args[0] + (Vector2(*size) // 2)
 
 
 class AnimationUI(Sprite):
@@ -568,24 +571,33 @@ class Player(Sprite):
             self.spawned = True
 
     def update_ult(self, enemys):
-        ens = []
+        ens, move = [], None
         for enemy in enemys:
             dist = Vector2(*self.rect.center) - Vector2(*enemy.rect.center)
             dist = dist.length() - self.rect.size[0]
             if dist <= self.radius:
                 ens.append(enemy)
-        if not self.ulta and len(ens) == 1 and ens[0].ulta:
-            move = ens[0].position - self.pos
+        ens_with_ult = [enemy.position for enemy in ens if enemy.ulta]
+        if not self.ulta and len(ens_with_ult) == 1:
+            move = ens_with_ult[0] - self.pos
             if move.length() <= 5:
                 self.dead = True
                 return
-            move = move.normalize() * self.speed * 1.5
-            self.pos += round_vector(move)
-        if self.ulta and len(ens) == 1 and ens[0].ulta:
-            move = (ens[0].position - self.pos) // 2
+        if self.ulta and len(ens_with_ult) == 1:
+            move = (ens_with_ult[0] - self.pos) / 2
             if move.length() < 1:
                 return
             move = move.rotate(60 if move.length() > 50 else 90)
+        if self.ulta and len(ens_with_ult) >= 2:
+            move = (find_cross_biss(ens_with_ult + [self.pos]) - self.pos) / 2
+            move = move.rotate(60 if move.length() > 50 else 90)
+        if not self.ulta and len(ens_with_ult) >= 3:
+            move = (find_cross_biss(ens_with_ult) - self.pos) / 2
+        if not self.ulta and len(ens_with_ult) == 2:
+            move = (ens_with_ult[0] - ens_with_ult[1]) / 2
+            if move.length() < 1:
+                return
+        if move:
             move = move.normalize() * self.speed
             self.pos += round_vector(move)
 
@@ -626,7 +638,9 @@ class Player(Sprite):
             move = round_vector(move)
         else:
             move = Vector2(0, 0)
-        self.pos += move
+        pos = self.pos + move
+        if -4950 <= pos.x <= 4950 and -4950 <= pos.y <= 4950:
+            self.pos += move
 
 
 class Enemy(Sprite):
@@ -670,7 +684,7 @@ def main(window_main):
     FonUi(Scenes["Register"], size)
     FonUi(Scenes["Menu"], size)
     FonUi(Scenes["Settings"], size)
-    gm_fon = FonUi(Scenes["Game"], (22000, 22000), pos=(-11000, -11000))
+    gm_fon = FonUi(Scenes["Game"], (12000, 12000), pos=(-6000, -6000))
     FonUi(Scenes["Finish"], size)
     pb_load = ProgressBarUI(Scenes["Load"], pb_size=(500, 100))
     TextUi(Scenes["Load"], "Подключение", text_size=(500, 200),
@@ -726,7 +740,10 @@ def main(window_main):
     vloume_eff_sl = SliderUI(Scenes["Settings"], int(volume[1] / 0.8 * 100), sl_size=(300, 50),
                              position=Vector2(*size) // 2 - Vector2(0, 150))
     player = Player(Scenes["Game"], user[1] if user else "")
-    Border(Scenes["Game"], Borders, 10000)
+    Border(Scenes["Game"], Borders, 12000, pos=Vector2(0, 5164))
+    Border(Scenes["Game"], Borders, 12000, pos=Vector2(0, -5164))
+    Border(Scenes["Game"], Borders, 10000, pos=Vector2(5164, 0), is_vert=True)
+    Border(Scenes["Game"], Borders, 10000, pos=Vector2(-5164, 0), is_vert=True)
     # Подключение
     for frame in range(200):
         if frame < 50:
