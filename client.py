@@ -153,6 +153,10 @@ def find_cross_biss(points):
         res = find_cross([points[i], points[i] + biss1], [points[i - 1], points[i - 1] + biss2])
         if res:
             result.append(res)
+    res, result = result[:], []
+    for i in res:
+        if i not in result:
+            result.append(i)
     if result:
         if len(result) == 1:
             return result[0]
@@ -406,23 +410,29 @@ class DropDownUI(Sprite):
 
 
 class ProgressBarUI(Sprite):
-    def __init__(self, group, value=0, max_value=100, position=(-1, -1), pb_size=(300, 100), font_size=50):
+    def __init__(self, group, value=0, max_value=100, position=(-1, -1), pb_size=(300, 100), font_size=50,
+                 is_text=True):
         super().__init__(group)
         self.rect = Rect(*position, *pb_size)
         self.rect.center = position if position != (-1, -1) else Vector2(*size) // 2
         self._value = value
         self.max_value = max_value
+        self.is_text = is_text
         self.font = pygame.font.Font(None, font_size)
         self.draw_UI()
 
     def draw_UI(self):
         self.image = Surface(self.rect.size)
         self.image.fill((100, 100, 100))
-        back = Surface((self.rect.size[0] // 100 * self._value if self._value else 0, self.rect.size[1]))
+        back = Surface((self.rect.size[0] // self.max_value * self._value if self._value else 0, self.rect.size[1]))
         back.fill((0, 0, 255))
-        txt = self.font.render(str(self._value), True, (255, 255, 255))
-        txt_rect = txt.get_rect()
-        txt_rect.center = Vector2(*self.rect.size) // 2
+        if self.is_text:
+            txt = self.font.render(str(self._value), True, (255, 255, 255))
+            txt_rect = txt.get_rect()
+            txt_rect.center = Vector2(*self.rect.size) // 2
+        else:
+            txt = Surface((0, 0))
+            txt_rect = (0, 0)
         self.image.blit(back, (0, 0))
         self.image.blit(txt, txt_rect)
 
@@ -550,6 +560,8 @@ class Player(Sprite):
         self.move = Vector2(0, 0)
         self.pos = Vector2(0, 0)
         self.speed = speed
+        self.ultabar = ProgressBarUI(group, 300, 300, Vector2(*size) // 2 - Vector2(0, 75),
+                                     (100, 30), is_text=False)
         self.radius = 250
         self.spawned = False
         self.ulta = False
@@ -602,6 +614,7 @@ class Player(Sprite):
             self.pos += round_vector(move)
 
     def update(self, events):
+        self.ultabar.update(events)
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
@@ -633,6 +646,20 @@ class Player(Sprite):
                     self.move.y -= 10
                 if event.key == pygame.K_w:
                     self.move.y += 10
+        if self.ulta and self.ultabar.value:
+            self.ultabar.value -= 1
+        elif self.ulta and not self.ultabar.value:
+            self.ultabar.value = 0
+            self.ulta = False
+            self.image = Player.img.copy()
+            font = pygame.font.Font(None, 50)
+            text = font.render(self.nick, True, (255, 255, 255))
+            rct = text.get_rect()
+            rct.center = (50, 50)
+            rct.size = (100, 100)
+            self.image.blit(text, rct)
+        else:
+            self.ultabar.value += 1
         if self.move.length():
             move = self.move.normalize() * self.speed
             move = round_vector(move)
@@ -641,6 +668,10 @@ class Player(Sprite):
         pos = self.pos + move
         if -4950 <= pos.x <= 4950 and -4950 <= pos.y <= 4950:
             self.pos += move
+
+    def draw(self, *args, **kwargs):
+        self.ultabar.draw(*args, **kwargs)
+        self.draw(*args, **kwargs)
 
 
 class Enemy(Sprite):

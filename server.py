@@ -135,10 +135,10 @@ def threaded_client(connection):
                 pl.spawned = True
             pl.ulta, pl.is_dead = new_ult, new_dead
             if not new_dead:
+                id_room = -1
                 cur.execute(f"UPDATE Users SET Online = 1 WHERE Id = {cur_pl[0]}")
                 con.commit()
             connection.send(str.encode(f"move {rooms[id_room].info()}"))
-            print(rooms[id_room].info())
         if log[0] == "logout" and cur_pl:
             cur.execute(f"UPDATE Users SET Online = 0 WHERE Id = {cur_pl[0]}")
             con.commit()
