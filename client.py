@@ -424,7 +424,7 @@ class ProgressBarUI(Sprite):
     def draw_UI(self):
         self.image = Surface(self.rect.size)
         self.image.fill((100, 100, 100))
-        back = Surface((self.rect.size[0] // self.max_value * self._value if self._value else 0, self.rect.size[1]))
+        back = Surface((round((self.rect.w / self.max_value) * self._value) if self._value else 0, self.rect.h))
         back.fill((0, 0, 255))
         if self.is_text:
             txt = self.font.render(str(self._value), True, (255, 255, 255))

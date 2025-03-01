@@ -101,7 +101,7 @@ def threaded_client(connection):
                 pl = list(map(lambda a: a[0], cur.execute(f"SELECT Id FROM Users").fetchall()))
                 if not pl:
                     pl = [0]
-                pl = max(pl)
+                pl = max(pl) + 1
                 cur.execute("INSERT INTO Users(Id, Login, Password, Online, Stats) VALUES(?, ?, ?, ?, ?)",
                             [pl, logn, pasw, 1, ""])
                 cur_pl = [pl, logn, pasw]
